@@ -5,6 +5,7 @@ import asyncio
 import aiosqlite
 import random
 import re
+import os
 
 PROVIDER_IMAGES = {
     "pragmatic": "https://cdn.discordapp.com/attachments/1283197229913608192/1362821484447399936/CvuaWH6WBTwAAAAASUVORK5CYII.png?ex=6a2cd729&is=6a2b85a9&hm=e8ef3da0bde4fbd77e5d2aa99ada5fdd66b0ac392035b4c79ddcefb5acef18f5",
