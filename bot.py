@@ -27,6 +27,37 @@ intents.guilds = True
 intents.reactions = True
 intents.members = True
 
+conn = sqlite3.connect(DB_PATH)
+cursor = conn.cursor()
+
+cursor.execute("""
+CREATE TABLE player_stats (
+    user_id INTEGER PRIMARY KEY,
+    username TEXT,
+
+    games_played INTEGER DEFAULT 0,
+    wins INTEGER DEFAULT 0,
+    losses INTEGER DEFAULT 0,
+
+    kills INTEGER DEFAULT 0,
+    super_kills INTEGER DEFAULT 0,
+    deaths INTEGER DEFAULT 0,
+    revives INTEGER DEFAULT 0
+)
+""")
+
+cursor.execute("""
+CREATE TABLE current_rumble_game (
+    guild_id TEXT PRIMARY KEY,
+    channel_id TEXT,
+    status TEXT,
+    mode TEXT,
+    started_at TEXT
+)
+""")
+
+conn.commit()
+
 bot = commands.Bot(command_prefix="!", intents=intents)
 JOIN_EMOJI = "🎰"
 manual_games = {}  # Stores {channel_id: (players, provider_name)}
