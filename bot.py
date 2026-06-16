@@ -13,6 +13,13 @@ PROVIDER_IMAGES = {
     "jedi_of_slots": "https://cdn.discordapp.com/attachments/1355803389262303362/1514923068982558751/DF5842AC-C6DF-4BF9-A751-1C52BC07A166.png?ex=6a2d218d&is=6a2bd00d&hm=ab41ffde88b21c9b0aecfc1185286624afbfecd65a68a78f466e07fa4119003c"
 }
 
+# ===================== CONFIG =====================
+TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+if not TOKEN:
+    raise SystemExit("❌ DISCORD_BOT_TOKEN is not set in environment variables.")
+    
+DB_PATH = "/data/events.db"
+
 intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
@@ -21,7 +28,6 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 JOIN_EMOJI = "🎰"
-DB_PATH = "/data/events.db"
 manual_games = {}  # Stores {channel_id: (players, provider_name)}
 
 @bot.event
