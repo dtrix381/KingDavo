@@ -32,7 +32,7 @@ conn = sqlite3.connect(DB_PATH)
 cursor = conn.cursor()
 
 cursor.execute("""
-CREATE TABLE player_stats (
+CREATE TABLE IF NOT EXISTS player_stats (
     user_id INTEGER PRIMARY KEY,
     username TEXT,
 
@@ -48,7 +48,7 @@ CREATE TABLE player_stats (
 """)
 
 cursor.execute("""
-CREATE TABLE current_rumble_game (
+CREATE TABLE IF NOT EXISTS current_rumble_game (
     guild_id TEXT PRIMARY KEY,
     channel_id TEXT,
     status TEXT,
