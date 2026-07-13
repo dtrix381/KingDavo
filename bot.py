@@ -63,6 +63,13 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 JOIN_EMOJI = "🎰"
 manual_games = {}  # Stores {channel_id: (players, provider_name)}
 
+EXCLUDED_LEADERBOARD_USERS = {
+    878253813553844254,
+    850665803161534484,
+    930627787792998430,
+    766968778512662540,
+}
+
 @bot.event
 async def on_ready():
     print(f"✅ Logged in as {bot.user}")
@@ -267,6 +274,13 @@ async def get_leaderboard_data():
             "revives": revives,
             "win_percent": win_percent
         })
+
+    # Exclude admins from leaderboard rankings
+    ranked = [
+        player
+        for player in ranked
+        if player["user_id"] not in EXCLUDED_LEADERBOARD_USERS
+    ]
 
     ranked.sort(
         key=lambda x: (
@@ -745,6 +759,13 @@ async def get_profile_rank(user_id):
         """) as cursor:
 
             rows = await cursor.fetchall()
+
+    # Exclude admins from ranking
+    rows = [
+        row
+        for row in rows
+        if row[0] not in EXCLUDED_LEADERBOARD_USERS
+    ]
 
     for rank, row in enumerate(rows, start=1):
 
@@ -1420,17 +1441,22 @@ async def profile(
         inline=False
     )
 
+    rank_name = (
+        "Current Leaderboard Rank"
+        if active
+        else "All-Time Rank"
+    )
+
+    if target.id in EXCLUDED_LEADERBOARD_USERS:
+        rank_value = "👑 Admin"
+    elif rank:
+        rank_value = f"#{rank}"
+    else:
+        rank_value = "Unranked"
+
     embed.add_field(
-        name=(
-            "Current Leaderboard Rank"
-            if active
-            else "All-Time Rank"
-        ),
-        value=(
-            f"#{rank}"
-            if rank
-            else "Unranked"
-        ),
+        name=rank_name,
+        value=rank_value,
         inline=False
     )
 
