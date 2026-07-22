@@ -586,17 +586,27 @@ async def get_leaderboard_winner():
             "win_percent": win_percent
         })
 
-    ranked.sort(
-        key=lambda x: (
-            -x["wins"],
-            -x["kills"],
-            -x["win_percent"],
-            -x["super_kills"],
-            x["games_played"]
-        )
-    )
+    # Exclude admins from winning the leaderboard
+        ranked = [
+            player
+            for player in ranked
+            if player["user_id"] not in EXCLUDED_LEADERBOARD_USERS
+        ]
 
-    return ranked[0]
+        if not ranked:
+            return None
+
+        ranked.sort(
+            key=lambda x: (
+                -x["wins"],
+                -x["kills"],
+                -x["win_percent"],
+                -x["super_kills"],
+                x["games_played"]
+            )
+        )
+
+        return ranked[0]
 
 class EndLeaderboardView(discord.ui.View):
 
