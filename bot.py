@@ -949,7 +949,7 @@ async def send_reminders(channel, join_msg, timer):
         app_commands.Choice(name="Pragmatic", value="pragmatic"),
         app_commands.Choice(name="Hacksaw", value="hacksaw"),
         app_commands.Choice(name="No Limit City", value="nolimit_city"),
-        app_commands.Choice(name="Jedi of Slots", value="jedi_of_slots")
+        app_commands.Choice(name="Wildlines", value="jedi_of_slots")
     ],
     mode=[
         app_commands.Choice(name="Auto", value="auto")
