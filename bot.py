@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 import asyncio
 import aiosqlite
@@ -7,12 +7,16 @@ import random
 import re
 import os
 import sqlite3
+import sys
+import aiohttp
+import time
+from datetime import datetime, date, timezone, timedelta
 
 PROVIDER_IMAGES = {
     "pragmatic": "https://cdn.discordapp.com/attachments/1283197229913608192/1362821484447399936/CvuaWH6WBTwAAAAASUVORK5CYII.png?ex=6a2cd729&is=6a2b85a9&hm=e8ef3da0bde4fbd77e5d2aa99ada5fdd66b0ac392035b4c79ddcefb5acef18f5",
     "hacksaw": "https://cdn.discordapp.com/attachments/1225024450345439313/1514975662211858462/image.png?ex=6a2d5288&is=6a2c0108&hm=2603e233798b21904a31ac3f48b98488b95b649f09c3ba55b5628f400b5b67a6",
     "nolimit_city": "https://cdn.discordapp.com/attachments/1353382950300811394/1374936691063918632/aJJvcpI1AAAAAElFTkSuQmCC.png?ex=686c8214&is=686b3094&hm=17d990f5013d8f961ebf03e898085a39b399822673481721a3482f1ab0287285&",
-    "jedi_of_slots": "https://cdn.discordapp.com/attachments/1355803389262303362/1514923068982558751/DF5842AC-C6DF-4BF9-A751-1C52BC07A166.png?ex=6a2d218d&is=6a2bd00d&hm=ab41ffde88b21c9b0aecfc1185286624afbfecd65a68a78f466e07fa4119003c"
+    "jedi_of_slots": "https://cdn.discordapp.com/attachments/1225024450345439313/1534176199297990676/beb73497-6ef9-4fa0-a0bb-b0313eb61533-fullsize.png?ex=6a732c6d&is=6a71daed&hm=ee292462c20f5f9c8295069deae66b89888c109d5a7ff9e83e3c1e0c28425c42"
 }
 
 # ===================== CONFIG =====================
@@ -70,14 +74,88 @@ EXCLUDED_LEADERBOARD_USERS = {
     766968778512662540,
 }
 
+RUMBLE_HOST_ROLES = {
+    1176520509907808388,  # Rumble Host
+    1176520509878440004,  # Head Host
+}
+
+DTRIX_ID = 488015447417946151
+
+REGION_ROLES = {
+    "🌸 Asia": "🌸",
+    "🦁 Africa": "🦁",
+    "🍁 North America": "🍁",
+    "🦘 Oceania": "🦘",
+    "🦜 South America": "🦜",
+    "🏰 Europe": "🏰",
+    "👑 United Kingdom": "👑",
+}
+
+RUMBLE_CHANNEL_ID = 1534864949002637472
+LEADERBOARD_CHANNEL_ID = 1534865162228727849
+PROFILE_CHANNEL_ID = 1534865304574759042
+SEASON_CHANNEL_ID = 1534865436116779119
+
 @bot.event
 async def on_ready():
+
+    bot.add_view(RegionRoleView())
+
+    streamers = await load_streamers()
+
+    if streamers:
+        bot.add_view(StreamerRoleView(streamers))
+
+    if not check_stream.is_running():
+        check_stream.start()
+        print("▶️ Kick stream checker started")
+
     print(f"✅ Logged in as {bot.user}")
     try:
         synced = await bot.tree.sync()
         print(f"🔁 Synced {len(synced)} command(s).")
     except Exception as e:
         print("Sync error:", e)
+
+
+@bot.event
+async def on_message(message):
+
+    if message.author.bot:
+        return
+
+    restricted_channels = {
+
+        LEADERBOARD_CHANNEL_ID: "/leaderboard",
+
+        PROFILE_CHANNEL_ID: "/profile",
+
+        SEASON_CHANNEL_ID: "/start_leaderboard or /end_leaderboard"
+
+    }
+
+    if message.channel.id in restricted_channels:
+
+        try:
+            await message.delete()
+        except discord.Forbidden:
+            return
+
+        warning = await message.channel.send(
+            f"{message.author.mention} ❌ This channel is only for **{restricted_channels[message.channel.id]}**."
+        )
+
+        await asyncio.sleep(5)
+
+        try:
+            await warning.delete()
+        except:
+            pass
+
+        return
+
+    await bot.process_commands(message)
+    
 
 async def get_all_phrases(provider):
     phrases = {}
@@ -882,8 +960,17 @@ async def send_reminders(channel, join_msg, timer):
         app_commands.Choice(name="3 mins", value=180)
     ]
 )
-@app_commands.checks.has_permissions(administrator=True)
+
 async def rumble_start(interaction: discord.Interaction, provider: app_commands.Choice[str], mode: app_commands.Choice[str], timer: app_commands.Choice[int]):
+    if not await require_channel(
+            interaction,
+            RUMBLE_CHANNEL_ID
+    ):
+        return
+
+    if not await require_rumble_host(interaction):
+        return
+
     await interaction.response.defer()
 
     image_url = PROVIDER_IMAGES.get(provider.value)
@@ -1255,6 +1342,12 @@ async def start_leaderboard(
     interaction: discord.Interaction
 ):
 
+    if not await require_channel(
+        interaction,
+        SEASON_CHANNEL_ID
+    ):
+        return
+
     async with aiosqlite.connect(DB_PATH) as db:
 
         async with db.execute(
@@ -1316,6 +1409,12 @@ async def end_leaderboard(
     interaction: discord.Interaction
 ):
 
+    if not await require_channel(
+        interaction,
+        SEASON_CHANNEL_ID
+    ):
+        return
+
     if not await leaderboard_is_active():
 
         await interaction.response.send_message(
@@ -1350,13 +1449,16 @@ async def end_leaderboard_error(
             ephemeral=True
         )
 
-@bot.tree.command(
-    name="leaderboard",
-    description="View leaderboard rankings"
-)
+@bot.tree.command(name="leaderboard", description="View leaderboard rankings")
 async def leaderboard(
     interaction: discord.Interaction
 ):
+
+    if not await require_channel(
+        interaction,
+        LEADERBOARD_CHANNEL_ID
+    ):
+        return
 
     data, active = await get_leaderboard_data()
 
@@ -1515,5 +1617,653 @@ async def aj_board2(interaction: discord.Interaction, attachment: discord.Attach
     await interaction.response.send_message("✅ Database replaced successfully.", ephemeral=True)
 
 
+class RegionRoleView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    async def update_region(self, interaction: discord.Interaction, role_name: str):
+        guild = interaction.guild
+        member = interaction.user
+
+        # Get the selected role
+        new_role = discord.utils.get(guild.roles, name=role_name)
+
+        if new_role is None:
+            await interaction.response.send_message(
+                f"❌ The role **{role_name}** could not be found.",
+                ephemeral=True
+            )
+            return
+
+        # Remove all existing region roles
+        roles_to_remove = []
+
+        for region_role in REGION_ROLES.keys():
+            role = discord.utils.get(guild.roles, name=region_role)
+
+            if role and role in member.roles:
+                roles_to_remove.append(role)
+
+        if roles_to_remove:
+            await member.remove_roles(
+                *roles_to_remove,
+                reason="Changed region"
+            )
+
+        # Add selected role
+        await member.add_roles(
+            new_role,
+            reason="Selected region"
+        )
+
+        await interaction.response.send_message(
+            f"✅ **Your region has been updated!**\n\n{role_name} has been added.",
+            ephemeral=True
+        )
+
+    @discord.ui.button(
+        label="Asia",
+        emoji="🌸",
+        style=discord.ButtonStyle.secondary,
+        custom_id="region_asia"
+    )
+    async def asia(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.update_region(interaction, "🌸 Asia")
+
+    @discord.ui.button(
+        label="Africa",
+        emoji="🦁",
+        style=discord.ButtonStyle.secondary,
+        custom_id="region_africa"
+    )
+    async def africa(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.update_region(interaction, "🦁 Africa")
+
+    @discord.ui.button(
+        label="North America",
+        emoji="🍁",
+        style=discord.ButtonStyle.secondary,
+        custom_id="region_na"
+    )
+    async def north_america(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.update_region(interaction, "🍁 North America")
+
+    @discord.ui.button(
+        label="Oceania",
+        emoji="🦘",
+        style=discord.ButtonStyle.secondary,
+        custom_id="region_oceania"
+    )
+    async def oceania(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.update_region(interaction, "🦘 Oceania")
+
+    @discord.ui.button(
+        label="South America",
+        emoji="🦜",
+        style=discord.ButtonStyle.secondary,
+        custom_id="region_sa"
+    )
+    async def south_america(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.update_region(interaction, "🦜 South America")
+
+    @discord.ui.button(
+        label="Europe",
+        emoji="🏰",
+        style=discord.ButtonStyle.secondary,
+        custom_id="region_europe"
+    )
+    async def europe(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.update_region(interaction, "🏰 Europe")
+
+    @discord.ui.button(
+        label="United Kingdom",
+        emoji="👑",
+        style=discord.ButtonStyle.secondary,
+        custom_id="region_uk"
+    )
+    async def united_kingdom(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.update_region(interaction, "👑 United Kingdom")
+
+
+@bot.tree.command(name="setup_regions", description="Create the region role panel.")
+async def setup_regions(interaction: discord.Interaction):
+
+    if interaction.user.id != DTRIX_ID:
+        await interaction.response.send_message(
+            "❌ You cannot use this command.",
+            ephemeral=True
+        )
+        return
+
+    # Tell Discord we're working on it
+    await interaction.response.defer(ephemeral=True)
+
+    guild = interaction.guild
+
+    # Create missing roles
+    for role_name in REGION_ROLES.keys():
+
+        role = discord.utils.get(
+            guild.roles,
+            name=role_name
+        )
+
+        if role is None:
+
+            await guild.create_role(
+                name=role_name,
+                reason="Region Role Setup"
+            )
+
+    embed = discord.Embed(
+        title="🌍 Choose Your Region",
+        description=(
+            "Welcome to the **Wildlines Community!**\n\n"
+            "Select the button below that best represents where you're from.\n\n"
+            "**Changing your selection automatically removes your previous region.**"
+        ),
+        color=discord.Color.blurple()
+    )
+
+    embed.add_field(
+        name="Available Regions",
+        value=(
+            "🌸 **Asia**\n"
+            "🦁 **Africa**\n"
+            "🍁 **North America**\n"
+            "🦘 **Oceania**\n"
+            "🦜 **South America**\n"
+            "🏰 **Europe**\n"
+            "👑 **United Kingdom**"
+        ),
+        inline=False
+    )
+
+    embed.set_footer(
+        text="You can change your region anytime."
+    )
+
+    await interaction.channel.send(
+        embed=embed,
+        view=RegionRoleView()
+    )
+
+    await interaction.followup.send(
+        "✅ Region role panel created successfully!",
+        ephemeral=True
+    )
+
+
+async def save_streamers(streamers):
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        await db.execute("DELETE FROM streamer_roles")
+
+        for streamer in streamers:
+            await db.execute("""
+                INSERT INTO streamer_roles
+                (
+                    position,
+                    member_id,
+                    member_name,
+                    role_id,
+                    role_name,
+                    kick_url
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                streamer["position"],
+                streamer["member_id"],
+                streamer["member_name"],
+                streamer["role_id"],
+                streamer["role_name"],
+                streamer["kick_url"]
+            ))
+
+        await db.commit()
+
+async def load_streamers():
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        async with db.execute("""
+            SELECT
+                position,
+                member_id,
+                member_name,
+                role_id,
+                role_name,
+                kick_url
+            FROM streamer_roles
+            ORDER BY position
+        """) as cursor:
+
+            rows = await cursor.fetchall()
+
+    streamers = []
+
+    for row in rows:
+
+        streamers.append({
+
+            "position": row[0],
+            "member_id": row[1],
+            "member_name": row[2],
+            "role_id": row[3],
+            "role_name": row[4],
+            "kick_url": row[5]
+
+        })
+
+    return streamers
+
+class StreamerRoleButton(discord.ui.Button):
+    def __init__(self, role_id: int, role_name: str):
+        super().__init__(
+            label=role_name,
+            emoji="🔔",
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"streamer_role_{role_id}"
+        )
+
+        self.role_id = role_id
+        self.role_name = role_name
+
+    async def callback(self, interaction: discord.Interaction):
+
+        guild = interaction.guild
+        member = interaction.user
+
+        role = guild.get_role(self.role_id)
+
+        if role is None:
+            await interaction.response.send_message(
+                "❌ This role no longer exists.",
+                ephemeral=True
+            )
+            return
+
+        # Toggle role
+        if role in member.roles:
+
+            await member.remove_roles(
+                role,
+                reason="Streamer notification role removed."
+            )
+
+            await interaction.response.send_message(
+                f"❌ Notifications disabled for **{self.role_name}**.",
+                ephemeral=True
+            )
+
+        else:
+
+            await member.add_roles(
+                role,
+                reason="Streamer notification role added."
+            )
+
+            await interaction.response.send_message(
+                f"✅ Notifications enabled for **{self.role_name}**.",
+                ephemeral=True
+            )
+
+class StreamerRoleView(discord.ui.View):
+
+    def __init__(self, streamers):
+
+        super().__init__(timeout=None)
+
+        for streamer in streamers:
+
+            self.add_item(
+                StreamerRoleButton(
+                    streamer["role_id"],
+                    streamer["role_name"]
+                )
+            )
+
+@bot.tree.command(
+    name="setup_streamers",
+    description="Create the Kick streamer notification panel."
+)
+@app_commands.describe(
+    streamer1="Discord member",
+    role1="Notification role name",
+    kick1="Kick username or URL",
+
+    streamer2="Discord member",
+    role2="Notification role name",
+    kick2="Kick username or URL",
+
+    streamer3="Discord member",
+    role3="Notification role name",
+    kick3="Kick username or URL",
+
+    streamer4="Discord member",
+    role4="Notification role name",
+    kick4="Kick username or URL",
+
+    streamer5="Discord member",
+    role5="Notification role name",
+    kick5="Kick username or URL"
+)
+async def setup_streamers(
+    interaction: discord.Interaction,
+
+    streamer1: discord.Member,
+    role1: str,
+    kick1: str,
+
+    streamer2: discord.Member = None,
+    role2: str = None,
+    kick2: str = None,
+
+    streamer3: discord.Member = None,
+    role3: str = None,
+    kick3: str = None,
+
+    streamer4: discord.Member = None,
+    role4: str = None,
+    kick4: str = None,
+
+    streamer5: discord.Member = None,
+    role5: str = None,
+    kick5: str = None,
+):
+
+    if interaction.user.id != DTRIX_ID:
+        await interaction.response.send_message(
+            "❌ You cannot use this command.",
+            ephemeral=True
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    guild = interaction.guild
+
+    entries = [
+        (streamer1, role1, kick1),
+        (streamer2, role2, kick2),
+        (streamer3, role3, kick3),
+        (streamer4, role4, kick4),
+        (streamer5, role5, kick5),
+    ]
+
+    streamers = []
+
+    for position, (member, role_name, kick_url) in enumerate(entries, start=1):
+
+        if member is None:
+            continue
+
+        if not role_name:
+            continue
+
+        if not kick_url:
+            continue
+
+        role = discord.utils.get(
+            guild.roles,
+            name=role_name
+        )
+
+        if role is None:
+            role = await guild.create_role(
+                name=role_name,
+                reason="Streamer notification setup"
+            )
+
+        if not kick_url.startswith("http"):
+            kick_url = f"https://kick.com/{kick_url}"
+
+        streamers.append({
+
+            "position": position,
+            "member_id": member.id,
+            "member_name": member.display_name,
+            "role_id": role.id,
+            "role_name": role.name,
+            "kick_url": kick_url
+
+        })
+
+    # ------------------------------------
+    # LOOP ENDS HERE
+    # ------------------------------------
+
+    await save_streamers(streamers)
+
+    embed = discord.Embed(
+        title="🔔 Kick Stream Notifications",
+        description=(
+            "Stay up to date when your favorite streamers go live!\n\n"
+            "Click the button(s) below to **add or remove** notification roles.\n"
+            "You can subscribe to as many streamers as you'd like."
+        ),
+        color=discord.Color.purple()
+    )
+
+    for streamer in streamers:
+        member = guild.get_member(streamer["member_id"])
+
+        member_text = member.mention if member else streamer["member_name"]
+
+        embed.add_field(
+            name=f"🎮 {streamer['role_name']}",
+            value=(
+                f"👤 **Streamer:** {member_text}\n"
+                f"🎭 **Role:** <@&{streamer['role_id']}>\n"
+                f"🎥 **Kick:** {streamer['kick_url']}"
+            ),
+            inline=False
+        )
+
+    embed.set_footer(
+        text="Click a button below to toggle your notification role."
+    )
+
+    view = StreamerRoleView(streamers)
+
+    await interaction.channel.send(
+        embed=embed,
+        view=view
+    )
+
+    await interaction.followup.send(
+        "✅ Streamer notification panel created successfully!",
+        ephemeral=True
+    )
+
+sys.stdout.reconfigure(line_buffering=True)
+
+LIVE_CHANNEL_ID = 1534125948989866166
+LIVE_ROLE_ID = 1176520509878439997
+KICK_USERNAME = "wildlines"
+
+KICK_API_URL = f"https://kick.com/api/v1/channels/{KICK_USERNAME}"
+PROXY_URL = f"https://aaronjay.dtrix381.workers.dev?u={KICK_API_URL}"
+
+was_live = False
+
+# ⏱️ Track stream stats
+stream_start_time = None
+peak_viewers = 0
+
+
+class KickLiveView(discord.ui.View):
+    def __init__(self, kick_username: str, button_label: str = "Watch Aaron Live on Kick"):
+        super().__init__(timeout=None)
+
+        self.add_item(
+            discord.ui.Button(
+                label=button_label,
+                url=f"https://kick.com/{kick_username}",
+                style=discord.ButtonStyle.link,
+                emoji="▶️"
+            )
+        )
+
+class KickLiveView(discord.ui.View):
+    def __init__(self, kick_username: str, button_label: str = "Watch Aaron Live on Kick"):
+        super().__init__(timeout=None)
+
+        self.add_item(
+            discord.ui.Button(
+                label=button_label,
+                url=f"https://kick.com/{kick_username}",
+                style=discord.ButtonStyle.link,
+                emoji="▶️"
+            )
+        )
+
+
+def is_valid_image_url(url: str) -> bool:
+    """Check if a URL is a valid image link (jpg, png, gif, webp) anywhere in the URL."""
+    if not url or not isinstance(url, str):
+        return False
+    return any(ext in url.lower() for ext in (".png", ".jpg", ".jpeg", ".gif", ".webp"))
+
+
+@tasks.loop(seconds=10)
+async def check_stream():
+    global was_live, stream_start_time, peak_viewers
+    print("⏱️ check_stream tick", flush=True)
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(PROXY_URL, timeout=10) as resp:
+                print("🌐 Kick status", resp.status, flush=True)
+
+                if resp.status != 200:
+                    return
+
+                data = await resp.json()
+
+        livestream = data.get("livestream")
+        is_live = livestream is not None
+        print(f"[Kick Check] live={is_live}", flush=True)
+
+        channel = bot.get_channel(LIVE_CHANNEL_ID)
+        if not channel:
+            return
+
+        # 🔴 STREAM STARTED
+        if is_live and not was_live:
+            stream_start_time = time.time()
+            peak_viewers = livestream.get("viewer_count", 0)
+
+            title = livestream.get("session_title") or "Live on Kick!"
+            thumbnail = livestream.get("thumbnail")
+
+            embed = discord.Embed(
+                title=f"LIVE NOW! Come watch {KICK_USERNAME} on Kick!",
+                description=f"**{title}**",
+                color=discord.Color.red(),
+                url=f"https://kick.com/{KICK_USERNAME}"
+            )
+
+            if is_valid_image_url(thumbnail):
+                embed.set_thumbnail(url=thumbnail)
+            else:
+                embed.set_image(
+                    url="https://cdn.discordapp.com/attachments/1225024450345439313/1534176199297990676/beb73497-6ef9-4fa0-a0bb-b0313eb61533-fullsize.png?ex=6a732c6d&is=6a71daed&hm=ee292462c20f5f9c8295069deae66b89888c109d5a7ff9e83e3c1e0c28425c42")
+
+            content = (
+                f"<@&{LIVE_ROLE_ID}>\n"
+                f"We are live right now!"
+            )
+
+            view = KickLiveView(KICK_USERNAME, "Tap to Watch Live")
+
+            await channel.send(content=content, embed=embed, view=view)
+            print("✅ Live notification sent", flush=True)
+
+        # 📈 UPDATE PEAK VIEWERS WHILE LIVE
+        if is_live and was_live:
+            viewers = livestream.get("viewer_count", 0)
+            peak_viewers = max(peak_viewers, viewers)
+
+        # ⚫ STREAM ENDED
+        if not is_live and was_live:
+            duration = int(time.time() - stream_start_time) if stream_start_time else 0
+            minutes, seconds = divmod(duration, 60)
+
+            embed = discord.Embed(
+                title="🛑 Stream Ended",
+                description=(
+                    "Thank you everyone for hanging out with us Today\n\n"
+                    "See you all next stream 👋🔥\n\n"
+                    f"**📊 Stream Stats**\n"
+                    f"• ⏱ Duration: **{minutes}m {seconds}s**\n"
+                    f"• 👀 Peak Viewers: **{peak_viewers}**"
+                ),
+                color=discord.Color.dark_grey(),
+                url=f"https://kick.com/{KICK_USERNAME}"
+            )
+
+            view = KickLiveView(KICK_USERNAME, "Watch Stream Replay")
+
+            await channel.send(embed=embed, view=view)
+            print("📴 Stream ended notification sent", flush=True)
+
+            # Reset stats
+            stream_start_time = None
+            peak_viewers = 0
+
+        was_live = is_live
+
+    except Exception as e:
+        print(f"❌ Kick error: {e}", flush=True)
+
+
+@check_stream.before_loop
+async def before_check_stream():
+    print("⏳ Waiting for bot to be ready before starting Kick checker...", flush=True)
+    await bot.wait_until_ready()
+    print("✅ Bot ready, Kick checker allowed to run", flush=True)
+
+
+async def require_channel(interaction, channel_id):
+
+    if interaction.channel.id == channel_id:
+        return True
+
+    target = interaction.guild.get_channel(channel_id)
+
+    if target:
+
+        await interaction.response.send_message(
+            f"❌ This command can only be used in {target.mention}.",
+            ephemeral=True
+        )
+
+    else:
+
+        await interaction.response.send_message(
+            "❌ Required channel could not be found.",
+            ephemeral=True
+        )
+
+    return False
+
+async def require_rumble_host(interaction: discord.Interaction):
+
+    if interaction.user.guild_permissions.administrator:
+        return True
+
+    member_roles = {role.id for role in interaction.user.roles}
+
+    if member_roles & RUMBLE_HOST_ROLES:
+        return True
+
+    await interaction.response.send_message(
+        "❌ You don't have permission to start a Rumble game.",
+        ephemeral=True
+    )
+
+    return False
+    
 if __name__ == "__main__":
     bot.run(TOKEN)
