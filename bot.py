@@ -138,7 +138,7 @@ async def on_ready():
     if http_session is None:
         http_session = aiohttp.ClientSession(
             headers={
-                "Authorization": f"Bot {DISCORD_BOT_TOKEN}"
+                "Authorization": f"Bot {TOKEN}"
             }
         )
 
