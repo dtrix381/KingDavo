@@ -11,6 +11,10 @@ import sys
 import aiohttp
 import time
 from datetime import datetime, date, timezone, timedelta
+import requests
+import xml.etree.ElementTree as ET
+from bs4 import BeautifulSoup
+import json
 
 PROVIDER_IMAGES = {
     "pragmatic": "https://cdn.discordapp.com/attachments/1283197229913608192/1362821484447399936/CvuaWH6WBTwAAAAASUVORK5CYII.png?ex=6a2cd729&is=6a2b85a9&hm=e8ef3da0bde4fbd77e5d2aa99ada5fdd66b0ac392035b4c79ddcefb5acef18f5",
@@ -96,6 +100,19 @@ LEADERBOARD_CHANNEL_ID = 1534865162228727849
 PROFILE_CHANNEL_ID = 1534865304574759042
 SEASON_CHANNEL_ID = 1534865436116779119
 
+POLITE_DELAY = (1.0, 2.5)
+ASK_CHANNEL_ID = 1373883150693830726
+CALL_CHANNEL_ID = 1373883150693830726
+
+SERVER_TAG = "WILD"
+GUILD_ID = 1176520509878439996
+TAG_ROLE_ID = 1535271894855712849
+TAG_LOG_CHANNEL_ID = 1535272144173531206
+TAG_CHECK_INTERVAL = 5      # minutes
+TAG_REQUALIFY_DAYS = 7
+SECONDS_PER_DAY = 86400
+http_session = None
+
 @bot.event
 async def on_ready():
 
@@ -109,6 +126,25 @@ async def on_ready():
     if not check_stream.is_running():
         check_stream.start()
         print("▶️ Kick stream checker started")
+
+    if not auto_scrape_slots.is_running():
+        auto_scrape_slots.start()
+        print("▶️ Auto slot scraper started (6h loop)")
+
+    await setup_tag_database()
+
+    global http_session
+
+    if http_session is None:
+        http_session = aiohttp.ClientSession(
+            headers={
+                "Authorization": f"Bot {DISCORD_BOT_TOKEN}"
+            }
+        )
+
+    if not tag_scanner.is_running():
+        tag_scanner.start()
+        print("🏷️ Server Tag scanner started")
 
     print(f"✅ Logged in as {bot.user}")
     try:
@@ -153,6 +189,32 @@ async def on_message(message):
             pass
 
         return
+
+    # Only enforce for messages in the restricted channels
+    if message.channel.id == ASK_CHANNEL_ID:
+        # Check if the message is not invoking /random_slot
+        if not message.content.startswith("/random_slot"):
+            try:
+                await message.delete()
+                await message.channel.send(
+                    f"{message.author.mention}, you can only use `/random_slot` in this channel!",
+                    delete_after=5  # auto-delete the warning after 5 seconds
+                )
+            except discord.Forbidden:
+                print("Missing permissions to delete message")
+            return  # stop processing further
+
+    elif message.channel.id == CALL_CHANNEL_ID:
+        if not message.content.startswith("/slot_call"):
+            try:
+                await message.delete()
+                await message.channel.send(
+                    f"{message.author.mention}, you can only use `/slot_call` in this channel!",
+                    delete_after=5
+                )
+            except discord.Forbidden:
+                print("Missing permissions to delete message")
+            return
 
     await bot.process_commands(message)
     
@@ -1496,6 +1558,12 @@ async def profile(
     member: discord.Member = None
 ):
 
+    if not await require_channel(
+        interaction,
+        PROFILE_CHANNEL_ID
+    ):
+        return
+
     target = member or interaction.user
 
     rank, active = await get_profile_rank(
@@ -2265,5 +2333,975 @@ async def require_rumble_host(interaction: discord.Interaction):
 
     return False
     
+NS = {'s': 'http://www.sitemaps.org/schemas/sitemap/0.9'}
+
+
+# ====== FETCH ======
+def get_existing_slot_urls():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT url FROM slots")
+    urls = {row[0] for row in c.fetchall()}  # set for fast lookup
+    conn.close()
+    return urls
+
+
+def get_all_slot_urls():
+    """Fetch all /free-slots/ URLs from sitemap, skipping URLs already in DB"""
+    sitemap_index_url = "https://www.demoslot.com/wp-sitemap.xml"
+    response = requests.get(sitemap_index_url)
+    if response.status_code != 200:
+        print("Failed to download sitemap index")
+        return []
+
+    root_index = ET.fromstring(response.text)
+    sub_sitemaps = [s.find('s:loc', NS).text for s in root_index.findall('s:sitemap', NS)]
+
+    existing_urls = get_existing_slot_urls()
+    slot_urls = []
+
+    for sm_url in sub_sitemaps:
+        try:
+            res = requests.get(sm_url)
+            sm_root = ET.fromstring(res.text)
+            for loc in sm_root.findall('s:url/s:loc', NS):
+                url = loc.text
+                if '/free-slots/' in url and url not in existing_urls:
+                    slot_urls.append(url)
+        except Exception as e:
+            print(f"Error fetching sitemap {sm_url}: {e}")
+
+    print(f"Found {len(slot_urls)} new slot URLs to scrape ✅")
+    return slot_urls
+
+
+def fetch_page(url):
+    """Fetch HTML content with retries"""
+    for _ in range(3):
+        try:
+            r = requests.get(url, timeout=10)
+            if r.status_code == 200:
+                return r.text
+            else:
+                print(f"Status code {r.status_code} for {url}")
+        except Exception as e:
+            print(f"Retrying {url} due to error: {e}")
+        time.sleep(2)
+    return None
+
+
+# ====== CLEAN NAME ======
+def clean_slot_name(name):
+    """Remove unwanted words from slot names"""
+    unwanted_phrases = ["Demo", "Free Play", "Slot", "Free Slot"]
+    for phrase in unwanted_phrases:
+        name = name.replace(phrase, "")
+    # Clean extra spaces and parentheses
+    name = name.strip()
+    name = name.replace("()", "")
+    return name
+
+
+# ====== PARSE SLOT ======
+def parse_slot(slot_url):
+    """Parse individual slot page"""
+    html = fetch_page(slot_url)
+    if not html:
+        return None
+
+    soup = BeautifulSoup(html, "html.parser")
+
+    # Name
+    name_tag = soup.find("h1")
+    name_span = name_tag.find("span", class_="notranslate") if name_tag else None
+    raw_name = name_span.get_text(strip=True) if name_span else (
+        name_tag.get_text(strip=True) if name_tag else "Unknown")
+    name = clean_slot_name(raw_name)
+
+    # Provider
+    provider_tag = soup.find("td", string="Provider")
+    if provider_tag:
+        provider = provider_tag.find_next_sibling("td").get_text(strip=True)
+    else:
+        figcap = soup.find("figcaption")
+        provider_span = figcap.find("span") if figcap else None
+        provider = provider_span.get_text(strip=True) if provider_span else "Unknown"
+
+    # Thumbnail
+    thumb_tag = soup.find("div", id="slot-demo")
+    if thumb_tag and thumb_tag.get("data-bg-image"):
+        thumbnail = thumb_tag["data-bg-image"].replace("url('", "").replace("')", "")
+    else:
+        og_image = soup.find("meta", property="og:image")
+        thumbnail = og_image.get("content") if og_image else ""
+
+    return {"name": name, "url": slot_url, "provider": provider, "thumbnail": thumbnail}
+
+
+def update_db(slot_data):
+    """Insert or update a slot in the DB"""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO slots (name, provider, url, thumbnail)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(url) DO UPDATE SET
+            name=excluded.name,
+            provider=excluded.provider,
+            thumbnail=excluded.thumbnail,
+            updated_at=CURRENT_TIMESTAMP
+    """, (slot_data["name"], slot_data["provider"], slot_data["url"], slot_data["thumbnail"]))
+    conn.commit()
+    conn.close()
+
+
+# ====== MAIN SCRAPER ======
+def scrape_and_update():
+    print("Fetching all slot URLs from sitemap...")
+    slot_urls = get_all_slot_urls()
+    print(f"Found {len(slot_urls)} slots to add/update.")
+
+    for index, url in enumerate(slot_urls, 1):
+        slot_data = parse_slot(url)
+        if slot_data:
+            update_db(slot_data)
+            print(f"[{index}/{len(slot_urls)}] Added/Updated: {slot_data['name']} ({slot_data['provider']})")
+        time.sleep(random.uniform(*POLITE_DELAY))
+
+    print("Scraping complete.")
+
+
+def increment_provider_usage(provider):
+    if provider == "ALL":
+        return  # don't track ALL
+
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+
+    c.execute("""
+        INSERT INTO provider_usage (provider, usage_count)
+        VALUES (?, 1)
+        ON CONFLICT(provider)
+        DO UPDATE SET usage_count = usage_count + 1
+    """, (provider,))
+
+    conn.commit()
+    conn.close()
+
+
+async def provider_autocomplete(interaction: discord.Interaction, current: str):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+
+    c.execute("""
+        SELECT s.provider,
+               COALESCE(u.usage_count, 0) as usage_count,
+               COUNT(slots.url) AS total_slots
+        FROM (
+            SELECT DISTINCT provider FROM slots
+        ) s
+        LEFT JOIN provider_usage u
+            ON s.provider = u.provider
+        LEFT JOIN slots
+            ON slots.provider = s.provider
+        WHERE s.provider LIKE ?
+        GROUP BY s.provider
+        ORDER BY usage_count DESC, total_slots DESC, s.provider ASC
+        LIMIT 25
+    """, (f"%{current}%",))
+
+    providers = [row[0] for row in c.fetchall()]
+    conn.close()
+
+    choices = [app_commands.Choice(name="All Providers", value="ALL")]
+
+    for p in providers:
+        choices.append(app_commands.Choice(name=p, value=p))
+
+    return choices[:25]
+
+
+class ProviderView(discord.ui.View):
+    def __init__(self, providers):
+        super().__init__(timeout=60)
+        self.add_item(ProviderSelect(providers))
+
+
+async def send_random_slot(interaction, provider_value):
+    # Track usage
+    increment_provider_usage(provider_value)
+
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+
+    if provider_value == "ALL":
+        c.execute("""
+            SELECT name, provider, url, thumbnail
+            FROM slots
+        """)
+    else:
+        c.execute("""
+            SELECT name, provider, url, thumbnail
+            FROM slots
+            WHERE provider = ?
+        """, (provider_value,))
+
+    rows = c.fetchall()
+    conn.close()
+
+    if not rows:
+        await interaction.response.send_message(
+            "No slots found for that provider.",
+            ephemeral=True
+        )
+        return
+
+    name, provider, url, thumbnail = random.choice(rows)
+
+    embed = discord.Embed(
+        title=name,
+        description=f"Provider: **{provider}**",
+        color=discord.Color.blue()
+    )
+
+    if thumbnail:
+        embed.set_thumbnail(url=thumbnail)
+
+    embed.set_footer(
+        text="⚠️ Gamble responsibly. Use at your own discretion."
+    )
+
+    await interaction.response.send_message(
+        content=f"{interaction.user.mention} Here’s your random slot!",
+        embed=embed
+    )
+
+
+def get_providers_by_usage(limit=24):
+    """
+    Return providers for the top select menu.
+    Prioritize usage_count, fallback to total slots.
+    Always include providers even if usage=0.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+
+    c.execute("""
+        SELECT s.provider,
+               COALESCE(u.usage_count, 0) AS usage_count,
+               COUNT(slots.url) AS total_slots
+        FROM (
+            SELECT DISTINCT provider FROM slots
+        ) s
+        LEFT JOIN provider_usage u
+            ON s.provider = u.provider
+        LEFT JOIN slots
+            ON slots.provider = s.provider
+        GROUP BY s.provider
+        ORDER BY usage_count DESC, total_slots DESC, s.provider ASC
+        LIMIT ?
+    """, (limit,))
+
+    providers = [row[0] for row in c.fetchall()]
+    conn.close()
+    return providers
+
+
+class ProviderSelect(discord.ui.Select):
+    def __init__(self, providers):
+        options = [
+            discord.SelectOption(
+                label="All Providers",
+                value="ALL",
+                description="Pick from all providers"
+            )
+        ]
+
+        # Add top providers by usage
+        for p in providers:
+            options.append(
+                discord.SelectOption(
+                    label=p,
+                    value=p
+                )
+            )
+
+        super().__init__(
+            placeholder="Quick pick provider...",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        await send_random_slot(interaction, self.values[0])
+
+
+@bot.tree.command(name="random_slot", description="Pick a random slot")
+@app_commands.describe(provider="Select or type a provider")
+@app_commands.autocomplete(provider=provider_autocomplete)
+async def random_slot(interaction: discord.Interaction, provider: str):
+    if interaction.channel_id != ASK_CHANNEL_ID:
+        await interaction.response.send_message(
+            f"⚠️ You can’t use that command here! Please go to <#{ASK_CHANNEL_ID}> to use `/random_slot`.",
+            ephemeral=True
+        )
+        return
+
+    # Fetch top providers for menu
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+
+    providers = get_providers_by_usage()
+    conn.close()
+
+    # If user typed provider → send immediately
+    if provider:
+        await send_random_slot(interaction, provider)
+        return
+
+    # Otherwise show select menu
+    await interaction.response.send_message(
+        "Quick pick a provider below or type one:",
+        view=ProviderView(providers),
+        ephemeral=True
+    )
+
+
+# ================= SLOT CALL COMMAND =================
+
+def get_top_slots(limit=25):
+    """Return top slots by usage_count from the DB"""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""
+        SELECT s.name, s.provider, s.url, s.thumbnail, COALESCE(u.usage_count, 0) as usage_count
+        FROM slots s
+        LEFT JOIN slot_usage u
+            ON s.name = u.slot_name
+        ORDER BY usage_count DESC, s.name ASC
+        LIMIT ?
+    """, (limit,))
+    slots = c.fetchall()
+    conn.close()
+    return slots
+
+
+async def slot_autocomplete(interaction: discord.Interaction, current: str):
+    """Autocomplete for slot names"""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""
+        SELECT s.name, s.provider
+        FROM slots s
+        LEFT JOIN slot_usage u
+            ON s.name = u.slot_name
+        WHERE s.name LIKE ?
+        ORDER BY COALESCE(u.usage_count, 0) DESC, s.name ASC
+        LIMIT 25
+    """, (f"%{current}%",))
+    slots = [f"{row[0]} - {row[1]}" for row in c.fetchall()]
+    conn.close()
+
+    return [
+        app_commands.Choice(name=slot, value=slot)
+        for slot in slots
+    ]
+
+
+def increment_slot_usage(slot_name):
+    """Track how many times each slot was called"""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS slot_usage (
+            slot_name TEXT PRIMARY KEY,
+            usage_count INTEGER DEFAULT 0
+        )
+    """)
+    c.execute("""
+        INSERT INTO slot_usage (slot_name, usage_count)
+        VALUES (?, 1)
+        ON CONFLICT(slot_name)
+        DO UPDATE SET usage_count = usage_count + 1
+    """, (slot_name,))
+    conn.commit()
+    conn.close()
+
+
+async def send_slot_call(interaction: discord.Interaction, slot_value: str):
+    """Send the slot call embed"""
+    slot_name, provider = slot_value.split(" - ", 1)
+
+    # Increment usage
+    increment_slot_usage(slot_name)
+
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""
+        SELECT url, thumbnail
+        FROM slots
+        WHERE name = ? AND provider = ?
+    """, (slot_name, provider))
+    row = c.fetchone()
+    conn.close()
+
+    url, thumbnail = row if row else ("", "")
+
+    embed = discord.Embed(
+        title=slot_name,
+        description=f"Provider: **{provider}**",
+        color=discord.Color.green()
+    )
+    if thumbnail:
+        # Adds a unique timestamp to the URL so Discord always downloads a fresh copy
+        separator = "&" if "?" in thumbnail else "?"
+        clean_thumbnail = f"{thumbnail}{separator}t={int(time.time())}"
+        embed.set_thumbnail(url=clean_thumbnail)
+    embed.set_footer(text="⚠️ Gamble responsibly. Use at your own discretion.")
+
+    await interaction.response.send_message(
+        content=f"{interaction.user.mention} suggested to play **{slot_name}**!",
+        embed=embed
+    )
+
+
+# 🔄 AUTO SLOT SCRAPER LOOP
+@tasks.loop(hours=24)  # change interval if you want
+async def auto_scrape_slots():
+    print("🔄 Auto scraping slots...")
+
+    slot_urls = get_all_slot_urls()
+    print(f"Found {len(slot_urls)} new slots to scrape.")
+
+    for index, url in enumerate(slot_urls, 1):
+        slot_data = parse_slot(url)
+
+        if slot_data:
+            update_db(slot_data)
+            print(f"[{index}/{len(slot_urls)}] Added/Updated: {slot_data['name']} ({slot_data['provider']})")
+
+        await asyncio.sleep(random.uniform(*POLITE_DELAY))
+
+    print("✅ Auto scrape cycle complete.")
+
+
+# Wait until bot is ready before first run
+@auto_scrape_slots.before_loop
+async def before_auto_scrape():
+    await bot.wait_until_ready()
+    print("⏳ Auto slot scraper waiting for bot ready...")
+
+
+# ================= DISCORD COMMAND =================
+@bot.tree.command(
+    name="slot_call",
+    description="Call a slot from the top slots")
+@app_commands.describe(slot="Pick a slot to call")
+@app_commands.autocomplete(slot=slot_autocomplete)
+async def slot_call(interaction: discord.Interaction, slot: str):
+    if interaction.channel_id != CALL_CHANNEL_ID:
+        await interaction.response.send_message(
+            f"⚠️ You can’t use that command here! Please go to <#{CALL_CHANNEL_ID}> to use `/slot_call`.",
+            ephemeral=True
+        )
+        return
+    await send_slot_call(interaction, slot)
+
+
+async def background_scrape():
+    await asyncio.sleep(1)  # small delay
+    print("Starting background scraping...")
+    slot_urls = get_all_slot_urls()  # uses DB-skipping version
+    print(f"Found {len(slot_urls)} new slots to scrape.")
+
+    for index, url in enumerate(slot_urls, 1):
+        slot_data = parse_slot(url)
+        if slot_data:
+            update_db(slot_data)
+            print(f"[{index}/{len(slot_urls)}] Added/Updated: {slot_data['name']} ({slot_data['provider']})")
+        await asyncio.sleep(random.uniform(*POLITE_DELAY))
+
+    print("Background scraping complete.")
+
+async def get_server_tag(user_id: int):
+
+    url = f"https://discord.com/api/v10/users/{user_id}"
+
+    try:
+
+        async with http_session.get(url) as response:
+
+            if response.status != 200:
+                return {
+                    "has_tag": False,
+                    "tag": None,
+                    "guild_id": None
+                }
+
+            data = await response.json()
+
+            primary = data.get("primary_guild")
+
+            if not primary:
+                return {
+                    "has_tag": False,
+                    "tag": None,
+                    "guild_id": None
+                }
+
+            guild_id = str(primary.get("identity_guild_id"))
+            tag = primary.get("tag")
+
+            has_tag = (
+                guild_id == str(GUILD_ID)
+                and
+                tag == SERVER_TAG
+            )
+
+            return {
+                "has_tag": has_tag,
+                "tag": tag,
+                "guild_id": guild_id
+            }
+
+    except Exception as e:
+
+        print(f"Tag API Error ({user_id}): {e}")
+
+        return {
+            "has_tag": False,
+            "tag": None,
+            "guild_id": None
+        }
+
+@bot.tree.command(name="checktag", description="Check official server tag")
+async def checktag(interaction: discord.Interaction):
+
+    result = await get_server_tag(interaction.user.id)
+
+    if result["has_tag"]:
+        await interaction.response.send_message(
+            f"✅ You currently have the official **{result['tag']}** server tag.",
+            ephemeral=True
+        )
+    else:
+        await interaction.response.send_message(
+            "❌ You do NOT currently have the official server tag.",
+            ephemeral=True
+        )
+
+async def get_tag_member(user_id: int):
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        cursor = await db.execute(
+            """
+            SELECT *
+            FROM tag_members
+            WHERE user_id = ?
+            """,
+            (user_id,)
+        )
+
+        return await cursor.fetchone()
+
+async def create_tag_member(user_id: int):
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        await db.execute(
+            """
+            INSERT OR IGNORE INTO tag_members
+            (
+                user_id,
+                first_received_at,
+                needs_requalify,
+                waiting_since,
+                last_removed_at
+            )
+
+            VALUES (?, ?, 0, NULL, NULL)
+            """,
+            (
+                user_id,
+                int(time.time())
+            )
+        )
+
+        await db.commit()
+
+async def start_requalification(user_id: int):
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        await db.execute(
+            """
+            UPDATE tag_members
+
+            SET
+
+                waiting_since = ?,
+                needs_requalify = 1
+
+            WHERE user_id = ?
+            """,
+            (
+                int(time.time()),
+                user_id
+            )
+        )
+
+        await db.commit()
+
+async def finish_requalification(user_id: int):
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        await db.execute(
+            """
+            UPDATE tag_members
+
+            SET
+
+                waiting_since = NULL,
+                needs_requalify = 0
+
+            WHERE user_id = ?
+            """,
+            (
+                user_id,
+            )
+        )
+
+        await db.commit()
+
+@tasks.loop(minutes=TAG_CHECK_INTERVAL)
+async def tag_scanner():
+
+    guild = bot.get_guild(GUILD_ID)
+
+    if guild is None:
+        return
+
+    print("🔍 Scanning server tags...")
+
+    for member in guild.members:
+
+        if member.bot:
+            continue
+
+        try:
+            await process_member(member)
+
+        except Exception as e:
+
+            print(f"Tag Scanner Error ({member.id}): {e}")
+
+async def setup_tag_database():
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS tag_members (
+
+            user_id INTEGER PRIMARY KEY,
+
+            first_received_at INTEGER,
+
+            needs_requalify INTEGER NOT NULL DEFAULT 0,
+
+            waiting_since INTEGER,
+
+            last_removed_at INTEGER
+
+        )
+        """)
+
+        await db.commit()
+
+    print("✅ Tag database ready.")
+
+async def update_last_removed(user_id: int):
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        await db.execute(
+            """
+            UPDATE tag_members
+
+            SET
+
+                last_removed_at = ?
+
+            WHERE user_id = ?
+            """,
+            (
+                int(time.time()),
+                user_id
+            )
+        )
+
+        await db.commit()
+
+async def has_tag_role(member: discord.Member):
+
+    return member.get_role(TAG_ROLE_ID) is not None
+
+async def give_tag_role(member: discord.Member):
+
+    role = member.guild.get_role(TAG_ROLE_ID)
+
+    if role is None:
+        return False
+
+    if role in member.roles:
+        return False
+
+    await member.add_roles(
+        role,
+        reason="Official Server Tag"
+    )
+
+    return True
+
+async def remove_tag_role(member: discord.Member):
+
+    role = member.guild.get_role(TAG_ROLE_ID)
+
+    if role is None:
+        return False
+
+    if role not in member.roles:
+        return False
+
+    await member.remove_roles(
+        role,
+        reason="Official Server Tag Removed"
+    )
+
+    return True
+
+def requalification_complete(waiting_since: int) -> bool:
+
+    if waiting_since is None:
+        return False
+
+    return (
+        int(time.time()) >=
+        waiting_since + (TAG_REQUALIFY_DAYS * SECONDS_PER_DAY)
+    )
+
+async def process_member(member: discord.Member):
+
+    tag = await get_server_tag(member.id)
+
+    record = await get_tag_member(member.id)
+
+    has_role = await has_tag_role(member)
+
+    #
+    # ---------------------------------------
+    # Brand new user with the server tag
+    # ---------------------------------------
+    #
+
+    if record is None:
+
+        if tag["has_tag"]:
+
+            await create_tag_member(member.id)
+
+            if not has_role:
+                await give_tag_role(member)
+
+            await send_tag_log(
+                member,
+                "🎉 Server Tag Role Granted",
+                (
+                    f"{member.mention}\n\n"
+                    f"Successfully qualified for the official **{SERVER_TAG}** Server Tag.\n\n"
+                    f"🎭 **Role Granted:** <@&{TAG_ROLE_ID}>"
+                ),
+                discord.Color.green()
+            )
+
+        return
+
+    #
+    # Existing database record
+    #
+
+    needs_requalify = bool(record[2])
+    waiting_since = record[3]
+
+    #
+    # ---------------------------------------
+    # User currently DOES NOT have the tag
+    # ---------------------------------------
+    #
+
+    if not tag["has_tag"]:
+
+        if has_role:
+
+            await remove_tag_role(member)
+
+        await update_last_removed(member.id)
+
+        async with aiosqlite.connect(DB_PATH) as db:
+
+            await db.execute(
+                """
+                UPDATE tag_members
+
+                SET
+
+                    needs_requalify = 1,
+                    waiting_since = NULL
+
+                WHERE user_id = ?
+                """,
+                (member.id,)
+            )
+
+            await db.commit()
+
+        await send_tag_log(
+            member,
+            "❌ Server Tag Removed",
+            (
+                f"{member.mention}\n\n"
+                f"The official **{SERVER_TAG}** Server Tag is no longer equipped.\n\n"
+                f"🎭 **Role Removed:** <@&{TAG_ROLE_ID}>\n"
+                f"⏳ **Status:** Requalification required."
+            ),
+            discord.Color.red()
+        )
+
+        return
+
+    #
+    # ---------------------------------------
+    # User HAS the tag again
+    # ---------------------------------------
+    #
+
+    if needs_requalify:
+
+        #
+        # Timer hasn't started yet
+        #
+
+        if waiting_since is None:
+
+            await start_requalification(member.id)
+
+            unlock = int(time.time()) + (TAG_REQUALIFY_DAYS * 86400)
+
+            await send_tag_log(
+                member,
+                "⏳ Requalification Started",
+                (
+                    f"{member.mention}\n\n"
+                    f"The official **{SERVER_TAG}** Server Tag has been detected again.\n\n"
+                    f"🎭 **Role:** Pending\n"
+                    f"🗓️ **Eligible On:** <t:{unlock}:F>\n"
+                    f"⏰ <t:{unlock}:R>"
+                ),
+                discord.Color.orange()
+            )
+
+            return
+
+        #
+        # Still waiting
+        #
+
+        if not requalification_complete(waiting_since):
+            return
+
+        #
+        # Qualification complete
+        #
+
+        await finish_requalification(member.id)
+
+        if not has_role:
+            await give_tag_role(member)
+
+        await send_tag_log(
+            member,
+            "✅ Requalification Complete",
+            (
+                f"{member.mention}\n\n"
+                f"The qualification period has been completed successfully.\n\n"
+                f"🎭 **Role Granted:** <@&{TAG_ROLE_ID}>"
+            ),
+            discord.Color.green()
+        )
+
+        return
+
+    #
+    # ---------------------------------------
+    # Qualified user missing the role
+    # (manual removal by admin, etc.)
+    # ---------------------------------------
+    #
+
+    if not has_role:
+
+        await give_tag_role(member)
+
+        await send_tag_log(
+            member,
+            "🔄 Role Restored",
+            (
+                f"{member.mention}\n\n"
+                f"The member is still eligible for the official **{SERVER_TAG}** Server Tag role.\n\n"
+                f"🎭 **Role Restored:** <@&{TAG_ROLE_ID}>\n"
+                f"📌 Missing role detected and restored automatically."
+            ),
+            discord.Color.blurple()
+        )
+
+async def send_tag_log(
+    member: discord.Member,
+    title: str,
+    description: str,
+    color: discord.Color
+):
+
+    channel = member.guild.get_channel(TAG_LOG_CHANNEL_ID)
+
+    if channel is None:
+        return
+
+    embed = discord.Embed(
+        title=title,
+        description=description,
+        color=color,
+        timestamp=discord.utils.utcnow()
+    )
+
+    embed.set_thumbnail(
+        url=member.display_avatar.url
+    )
+
+    embed.set_author(
+        name=str(member),
+        icon_url=member.display_avatar.url
+    )
+
+    embed.set_footer(
+        text=f"User ID: {member.id}"
+    )
+
+    await channel.send(
+        content=member.mention,
+        embed=embed
+    )
+
 if __name__ == "__main__":
     bot.run(TOKEN)
