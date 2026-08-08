@@ -142,6 +142,21 @@ async def on_ready():
     # -----------------------------------------
 
     await setup_tag_database()
+    await setup_giveaway_database()
+
+    active_giveaway = await get_active_giveaway()
+
+    if active_giveaway:
+        giveaway_id = active_giveaway[0]
+
+        bot.add_view(
+            WildGiveawayView(giveaway_id)
+        )
+
+        print(
+            f"🎉 Active giveaway restored: "
+            f"{giveaway_id}"
+        )
 
     # -----------------------------------------
     # DISCORD API SESSION
@@ -3713,6 +3728,753 @@ async def tag_scanner():
     print(f"❌ Errors: {errors}")
     print(f"⏱️ Time: {elapsed} seconds")
     print("========================================")
+
+
+async def setup_giveaway_database():
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS giveaways (
+
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            guild_id INTEGER NOT NULL,
+
+            channel_id INTEGER NOT NULL,
+
+            message_id INTEGER NOT NULL,
+
+            prize TEXT NOT NULL,
+
+            image_url TEXT,
+
+            active INTEGER NOT NULL DEFAULT 1,
+
+            created_at INTEGER NOT NULL,
+
+            winner_id INTEGER
+
+        )
+        """)
+
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS giveaway_entries (
+
+            giveaway_id INTEGER NOT NULL,
+
+            user_id INTEGER NOT NULL,
+
+            joined_at INTEGER NOT NULL,
+
+            PRIMARY KEY (giveaway_id, user_id)
+
+        )
+        """)
+
+        await db.commit()
+
+    print("✅ Giveaway database ready.")
     
+async def get_active_giveaway():
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        cursor = await db.execute(
+            """
+            SELECT
+                id,
+                guild_id,
+                channel_id,
+                message_id,
+                prize,
+                image_url,
+                active,
+                created_at,
+                winner_id
+            FROM giveaways
+            WHERE active = 1
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        )
+
+        return await cursor.fetchone()
+
+async def get_active_giveaway():
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        cursor = await db.execute(
+            """
+            SELECT
+                id,
+                guild_id,
+                channel_id,
+                message_id,
+                prize,
+                image_url,
+                active,
+                created_at,
+                winner_id
+            FROM giveaways
+            WHERE active = 1
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        )
+
+        return await cursor.fetchone()
+        
+async def add_giveaway_entry(
+    giveaway_id: int,
+    user_id: int
+):
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        await db.execute(
+            """
+            INSERT OR IGNORE INTO giveaway_entries
+            (
+                giveaway_id,
+                user_id,
+                joined_at
+            )
+            VALUES (?, ?, ?)
+            """,
+            (
+                giveaway_id,
+                user_id,
+                int(time.time())
+            )
+        )
+
+        await db.commit()
+        
+async def remove_giveaway_entry(
+    giveaway_id: int,
+    user_id: int
+):
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        await db.execute(
+            """
+            DELETE FROM giveaway_entries
+            WHERE giveaway_id = ?
+            AND user_id = ?
+            """,
+            (
+                giveaway_id,
+                user_id
+            )
+        )
+
+        await db.commit()
+
+
+async def get_giveaway_entries(
+    giveaway_id: int
+):
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        cursor = await db.execute(
+            """
+            SELECT user_id
+            FROM giveaway_entries
+            WHERE giveaway_id = ?
+            ORDER BY joined_at ASC
+            """,
+            (giveaway_id,)
+        )
+
+        rows = await cursor.fetchall()
+
+        return [row[0] for row in rows]
+
+async def finish_giveaway(
+    giveaway_id: int,
+    winner_id: int
+):
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        await db.execute(
+            """
+            UPDATE giveaways
+
+            SET
+                active = 0,
+                winner_id = ?
+
+            WHERE id = ?
+            """,
+            (
+                winner_id,
+                giveaway_id
+            )
+        )
+
+        await db.commit()
+
+def create_giveaway_embed(
+    prize: str,
+    participant_count: int,
+    image_url: str | None = None
+):
+
+    embed = discord.Embed(
+        title="WILD SERVER TAG GIVEAWAY",
+        description=(
+            f"## 🎁 {prize}\n\n"
+            f"👥 **Participants:** {participant_count}\n\n"
+            f"Only members with the official "
+            f"**{SERVER_TAG}** role may participate.\n\n"
+            f"Click **Join Giveaway** below to enter!"
+        ),
+        color=discord.Color.gold()
+    )
+
+    if image_url:
+        embed.set_image(url=image_url)
+
+    embed.set_footer(
+        text="WILD Server Tag Giveaway"
+    )
+
+    return embed
+
+class WildGiveawayView(discord.ui.View):
+
+    def __init__(self, giveaway_id: int):
+
+        super().__init__(timeout=None)
+
+        self.giveaway_id = giveaway_id
+
+    # -----------------------------------------
+    # JOIN GIVEAWAY
+    # -----------------------------------------
+
+    @discord.ui.button(
+        label="Join Giveaway",
+        emoji="🎉",
+        style=discord.ButtonStyle.success,
+        custom_id="wild_giveaway_join"
+    )
+    async def join_giveaway(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        member = interaction.guild.get_member(
+            interaction.user.id
+        )
+
+        if member is None:
+
+            await interaction.response.send_message(
+                "❌ You must be a member of this server.",
+                ephemeral=True
+            )
+
+            return
+
+        # -----------------------------------------
+        # CHECK REQUIRED ROLE
+        # -----------------------------------------
+
+        if not await has_tag_role(member):
+
+            await interaction.response.send_message(
+                f"❌ You must have the **{SERVER_TAG}** "
+                f"Server Tag role to join this giveaway.",
+                ephemeral=True
+            )
+
+            return
+
+        # -----------------------------------------
+        # CHECK ACTUAL SERVER TAG
+        # -----------------------------------------
+
+        tag = await get_server_tag(member.id)
+
+        if not tag["api_ok"]:
+
+            await interaction.response.send_message(
+                "⚠️ I couldn't verify your Server Tag "
+                "right now. Please try again.",
+                ephemeral=True
+            )
+
+            return
+
+        if not tag["has_tag"]:
+
+            await interaction.response.send_message(
+                f"❌ You must currently have the official "
+                f"**{SERVER_TAG}** Server Tag to join.",
+                ephemeral=True
+            )
+
+            return
+
+        # -----------------------------------------
+        # CHECK ALREADY ENTERED
+        # -----------------------------------------
+
+        entries = await get_giveaway_entries(
+            self.giveaway_id
+        )
+
+        if interaction.user.id in entries:
+
+            await interaction.response.send_message(
+                "ℹ️ You are already entered in this giveaway.",
+                ephemeral=True
+            )
+
+            return
+
+        # -----------------------------------------
+        # ADD ENTRY
+        # -----------------------------------------
+
+        await add_giveaway_entry(
+            self.giveaway_id,
+            interaction.user.id
+        )
+
+        await interaction.response.send_message(
+            "🎉 You have successfully entered the giveaway!",
+            ephemeral=True
+        )
+
+        # -----------------------------------------
+        # UPDATE GIVEAWAY EMBED
+        # -----------------------------------------
+
+        giveaway = await get_active_giveaway()
+
+        if giveaway:
+
+            (
+                giveaway_id,
+                guild_id,
+                channel_id,
+                message_id,
+                prize,
+                image_url,
+                active,
+                created_at,
+                winner_id
+            ) = giveaway
+
+            try:
+
+                embed = create_giveaway_embed(
+                    prize,
+                    len(entries) + 1,
+                    image_url
+                )
+
+                await interaction.message.edit(
+                    embed=embed,
+                    view=self
+                )
+
+            except Exception as e:
+
+                print(
+                    f"❌ Giveaway embed update error: {e}"
+                )
+
+    # -----------------------------------------
+    # ENTRANTS
+    # -----------------------------------------
+
+    @discord.ui.button(
+        label="Entrants",
+        emoji="👥",
+        style=discord.ButtonStyle.secondary,
+        custom_id="wild_giveaway_entrants"
+    )
+    async def entrants(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        entries = await get_giveaway_entries(
+            self.giveaway_id
+        )
+
+        if not entries:
+
+            await interaction.response.send_message(
+                "👥 **Entrants:** 0\n\nNobody has entered yet.",
+                ephemeral=True
+            )
+
+            return
+
+        mentions = []
+
+        for user_id in entries:
+
+            mentions.append(
+                f"<@{user_id}>"
+            )
+
+        # Discord embed/message limits
+        # Keep the list manageable.
+
+        text = "\n".join(mentions)
+
+        if len(text) > 1900:
+
+            text = text[:1900] + "\n..."
+
+        await interaction.response.send_message(
+            f"👥 **Entrants: {len(entries)}**\n\n{text}",
+            ephemeral=True
+        )
+
+    # -----------------------------------------
+    # DRAW GIVEAWAY
+    # -----------------------------------------
+
+    @discord.ui.button(
+        label="Draw Giveaway",
+        emoji="🎲",
+        style=discord.ButtonStyle.danger,
+        custom_id="wild_giveaway_draw"
+    )
+    async def draw_giveaway(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        # -----------------------------------------
+        # ADMIN ONLY
+        # -----------------------------------------
+
+        if not interaction.user.guild_permissions.administrator:
+
+            await interaction.response.send_message(
+                "❌ Only administrators can draw the giveaway.",
+                ephemeral=True
+            )
+
+            return
+
+        await interaction.response.defer()
+
+        giveaway = await get_active_giveaway()
+
+        if giveaway is None:
+
+            await interaction.followup.send(
+                "❌ There is no active giveaway.",
+                ephemeral=True
+            )
+
+            return
+
+        (
+            giveaway_id,
+            guild_id,
+            channel_id,
+            message_id,
+            prize,
+            image_url,
+            active,
+            created_at,
+            winner_id
+        ) = giveaway
+
+        # -----------------------------------------
+        # GET ENTRANTS
+        # -----------------------------------------
+
+        entries = await get_giveaway_entries(
+            giveaway_id
+        )
+
+        if not entries:
+
+            await interaction.followup.send(
+                "❌ There are no entrants.",
+                ephemeral=True
+            )
+
+            return
+
+        eligible = []
+
+        # -----------------------------------------
+        # VERIFY EVERY ENTRANT
+        # -----------------------------------------
+
+        for user_id in entries:
+
+            member = interaction.guild.get_member(
+                user_id
+            )
+
+            if member is None:
+                continue
+
+            # Must still have Discord role
+            if not await has_tag_role(member):
+                continue
+
+            # Must still have actual WILD tag
+            tag = await get_server_tag(user_id)
+
+            if not tag["api_ok"]:
+
+                print(
+                    f"⚠️ Could not verify giveaway "
+                    f"entrant {user_id}. Skipping."
+                )
+
+                continue
+
+            if not tag["has_tag"]:
+                continue
+
+            eligible.append(member)
+
+        # -----------------------------------------
+        # NO ELIGIBLE USERS
+        # -----------------------------------------
+
+        if not eligible:
+
+            await interaction.followup.send(
+                "❌ Nobody currently meets the "
+                "WILD Server Tag requirements.",
+                ephemeral=True
+            )
+
+            return
+
+        # -----------------------------------------
+        # DRAW WINNER
+        # -----------------------------------------
+
+        winner = random.choice(
+            eligible
+        )
+
+        await finish_giveaway(
+            giveaway_id,
+            winner.id
+        )
+
+        # -----------------------------------------
+        # DISABLE BUTTONS
+        # -----------------------------------------
+
+        for item in self.children:
+
+            item.disabled = True
+
+        # -----------------------------------------
+        # WINNER EMBED
+        # -----------------------------------------
+
+        winner_embed = discord.Embed(
+            title="🏆 WILD GIVEAWAY WINNER!",
+            description=(
+                f"🎉 Congratulations {winner.mention}!\n\n"
+                f"You won:\n"
+                f"## 🎁 {prize}\n\n"
+                f"Thank you to everyone who participated!"
+            ),
+            color=discord.Color.gold(),
+            timestamp=discord.utils.utcnow()
+        )
+
+        winner_embed.set_thumbnail(
+            url=winner.display_avatar.url
+        )
+
+        winner_embed.set_footer(
+            text="WILD Server Tag Giveaway"
+        )
+
+        await interaction.channel.send(
+            content=winner.mention,
+            embed=winner_embed
+        )
+
+        # -----------------------------------------
+        # UPDATE ORIGINAL GIVEAWAY
+        # -----------------------------------------
+
+        try:
+
+            closed_embed = create_giveaway_embed(
+                prize,
+                len(entries),
+                image_url
+            )
+
+            closed_embed.title = "🏆 WILD GIVEAWAY — ENDED"
+
+            closed_embed.description = (
+                f"## 🎁 {prize}\n\n"
+                f"🏆 **Winner:** {winner.mention}\n\n"
+                f"👥 **Participants:** {len(entries)}\n\n"
+                f"This giveaway has ended."
+            )
+
+            await interaction.message.edit(
+                embed=closed_embed,
+                view=self
+            )
+
+        except Exception as e:
+
+            print(
+                f"❌ Giveaway close error: {e}"
+            )
+
+@bot.tree.command(
+    name="wild_tag_giveaway",
+    description="Create a WILD Server Tag giveaway"
+)
+@app_commands.describe(
+    prize="The giveaway prize",
+    image="Image URL for the giveaway"
+)
+async def wild_tag_giveaway(
+    interaction: discord.Interaction,
+    prize: str,
+    image: str | None = None
+):
+
+    # -----------------------------------------
+    # ADMIN ONLY
+    # -----------------------------------------
+
+    if not interaction.user.guild_permissions.administrator:
+
+        await interaction.response.send_message(
+            "❌ Only administrators can create giveaways.",
+            ephemeral=True
+        )
+
+        return
+
+    # -----------------------------------------
+    # CHECK ACTIVE GIVEAWAY
+    # -----------------------------------------
+
+    active = await get_active_giveaway()
+
+    if active:
+
+        await interaction.response.send_message(
+            "❌ There is already an active WILD giveaway.\n\n"
+            "Draw the current giveaway before creating another one.",
+            ephemeral=True
+        )
+
+        return
+
+    # -----------------------------------------
+    # CREATE DATABASE RECORD
+    # -----------------------------------------
+
+    await interaction.response.defer()
+
+    now = int(time.time())
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        cursor = await db.execute(
+            """
+            INSERT INTO giveaways
+            (
+                guild_id,
+                channel_id,
+                message_id,
+                prize,
+                image_url,
+                active,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, 1, ?)
+            """,
+            (
+                interaction.guild.id,
+                interaction.channel.id,
+                0,
+                prize,
+                image,
+                now
+            )
+        )
+
+        giveaway_id = cursor.lastrowid
+
+        await db.commit()
+
+    # -----------------------------------------
+    # CREATE VIEW
+    # -----------------------------------------
+
+    view = WildGiveawayView(
+        giveaway_id
+    )
+
+    embed = create_giveaway_embed(
+        prize,
+        0,
+        image
+    )
+
+    message = await interaction.followup.send(
+        embed=embed,
+        view=view,
+        wait=True
+    )
+
+    # -----------------------------------------
+    # SAVE MESSAGE ID
+    # -----------------------------------------
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        await db.execute(
+            """
+            UPDATE giveaways
+
+            SET message_id = ?
+
+            WHERE id = ?
+            """,
+            (
+                message.id,
+                giveaway_id
+            )
+        )
+
+        await db.commit()
+
+    print(
+        f"🎉 Giveaway created: "
+        f"{giveaway_id}"
+    )
+
+
 if __name__ == "__main__":
     bot.run(TOKEN)
