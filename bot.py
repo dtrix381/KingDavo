@@ -116,6 +116,8 @@ http_session = None
 @bot.event
 async def on_ready():
 
+    global http_session
+
     bot.add_view(RegionRoleView())
 
     streamers = await load_streamers()
@@ -147,8 +149,6 @@ async def on_ready():
     # -----------------------------------------
 
     await setup_tag_database()
-
-    global http_session
 
     if http_session is None:
         http_session = aiohttp.ClientSession(
