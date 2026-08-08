@@ -107,7 +107,7 @@ CALL_CHANNEL_ID = 1373883150693830726
 SERVER_TAG = "WILD"
 GUILD_ID = 1176520509878439996
 TAG_ROLE_ID = 1535271894855712849
-TAG_LOG_CHANNEL_ID = 1535461027829780490
+TAG_LOG_CHANNEL_ID = 1535468037346689024
 TAG_CHECK_INTERVAL = 60      # minutes
 TAG_REQUALIFY_DAYS = 7
 SECONDS_PER_DAY = 86400
@@ -2886,45 +2886,91 @@ async def get_server_tag(user_id: int):
 
         async with http_session.get(url) as response:
 
-            if response.status != 200:
+            # -----------------------------------------
+            # SUCCESS
+            # -----------------------------------------
+
+            if response.status == 200:
+
+                data = await response.json()
+
+                primary = data.get("primary_guild")
+
+                if not primary:
+                    return {
+                        "success": True,
+                        "has_tag": False,
+                        "tag": None,
+                        "guild_id": None
+                    }
+
+                guild_id = str(
+                    primary.get("identity_guild_id")
+                )
+
+                tag = primary.get("tag")
+
+                has_tag = (
+                    guild_id == str(GUILD_ID)
+                    and
+                    tag == SERVER_TAG
+                )
+
                 return {
-                    "has_tag": False,
+                    "success": True,
+                    "has_tag": has_tag,
+                    "tag": tag,
+                    "guild_id": guild_id
+                }
+
+            # -----------------------------------------
+            # RATE LIMITED
+            # -----------------------------------------
+
+            if response.status == 429:
+
+                retry_after = response.headers.get(
+                    "Retry-After",
+                    "unknown"
+                )
+
+                print(
+                    f"⚠️ Discord API rate limit for "
+                    f"{user_id}. Retry-After: {retry_after}"
+                )
+
+                return {
+                    "success": False,
+                    "has_tag": None,
                     "tag": None,
                     "guild_id": None
                 }
 
-            data = await response.json()
+            # -----------------------------------------
+            # OTHER API ERROR
+            # -----------------------------------------
 
-            primary = data.get("primary_guild")
-
-            if not primary:
-                return {
-                    "has_tag": False,
-                    "tag": None,
-                    "guild_id": None
-                }
-
-            guild_id = str(primary.get("identity_guild_id"))
-            tag = primary.get("tag")
-
-            has_tag = (
-                guild_id == str(GUILD_ID)
-                and
-                tag == SERVER_TAG
+            print(
+                f"⚠️ Discord API returned "
+                f"{response.status} for {user_id}"
             )
 
             return {
-                "has_tag": has_tag,
-                "tag": tag,
-                "guild_id": guild_id
+                "success": False,
+                "has_tag": None,
+                "tag": None,
+                "guild_id": None
             }
 
     except Exception as e:
 
-        print(f"Tag API Error ({user_id}): {e}")
+        print(
+            f"⚠️ Tag API Error ({user_id}): {e}"
+        )
 
         return {
-            "has_tag": False,
+            "success": False,
+            "has_tag": None,
             "tag": None,
             "guild_id": None
         }
@@ -3295,17 +3341,31 @@ def requalification_complete(waiting_since: int) -> bool:
 
 async def process_member(member: discord.Member):
 
+    if member.bot:
+        return
+
+    # -----------------------------------------
+    # CHECK DISCORD API
+    # -----------------------------------------
+
     tag = await get_server_tag(member.id)
+
+    # -----------------------------------------
+    # VERY IMPORTANT:
+    # API FAILURE = DO NOTHING
+    # -----------------------------------------
+
+    if not tag["success"]:
+
+        return
 
     record = await get_tag_member(member.id)
 
     has_role = await has_tag_role(member)
 
-    #
-    # ---------------------------------------
-    # Brand new user with the server tag
-    # ---------------------------------------
-    #
+    # -----------------------------------------
+    # BRAND NEW USER
+    # -----------------------------------------
 
     if record is None:
 
@@ -3314,35 +3374,81 @@ async def process_member(member: discord.Member):
             await create_tag_member(member.id)
 
             if not has_role:
+
                 await give_tag_role(member)
 
-            await send_tag_log(
-                member,
-                "🎉 Server Tag Role Granted",
-                (
-                    f"{member.mention}\n\n"
-                    f"Successfully qualified for the official **{SERVER_TAG}** Server Tag.\n\n"
-                    f"🎭 **Role Granted:** <@&{TAG_ROLE_ID}>"
-                ),
-                discord.Color.green()
-            )
+                await send_tag_log(
+                    member,
+                    "🎉 Server Tag Role Granted",
+                    (
+                        f"{member.mention}\n\n"
+                        f"Successfully qualified for the official "
+                        f"**{SERVER_TAG}** Server Tag.\n\n"
+                        f"🎭 **Role Granted:** <@&{TAG_ROLE_ID}>"
+                    ),
+                    discord.Color.green()
+                )
 
         return
 
-    #
-    # Existing database record
-    #
+    # -----------------------------------------
+    # EXISTING USER DATA
+    # -----------------------------------------
 
     needs_requalify = bool(record[2])
     waiting_since = record[3]
 
-    #
-    # ---------------------------------------
-    # User currently DOES NOT have the tag
-    # ---------------------------------------
-    #
+    # -----------------------------------------
+    # USER DOES NOT HAVE WILD TAG
+    # -----------------------------------------
 
     if not tag["has_tag"]:
+
+        # -----------------------------------------
+        # ALREADY IN REQUALIFICATION
+        #
+        # Do NOT repeatedly log removal.
+        # -----------------------------------------
+
+        if needs_requalify:
+
+            # If somehow the role still exists,
+            # remove it, but don't create another log.
+            if has_role:
+
+                await remove_tag_role(member)
+
+            # Make sure timer isn't active while
+            # the user has no tag.
+            if waiting_since is not None:
+
+                async with aiosqlite.connect(DB_PATH) as db:
+
+                    await db.execute(
+                        """
+                        UPDATE tag_members
+
+                        SET
+                            waiting_since = NULL
+
+                        WHERE user_id = ?
+                        """,
+                        (member.id,)
+                    )
+
+                    await db.commit()
+
+            return
+
+        # -----------------------------------------
+        # THIS IS A REAL TRANSITION:
+        #
+        # Qualified
+        #     ↓
+        # Tag removed
+        #     ↓
+        # Requalification required
+        # -----------------------------------------
 
         if has_role:
 
@@ -3357,7 +3463,6 @@ async def process_member(member: discord.Member):
                 UPDATE tag_members
 
                 SET
-
                     needs_requalify = 1,
                     waiting_since = NULL
 
@@ -3373,7 +3478,8 @@ async def process_member(member: discord.Member):
             "❌ Server Tag Removed",
             (
                 f"{member.mention}\n\n"
-                f"The official **{SERVER_TAG}** Server Tag is no longer equipped.\n\n"
+                f"The official **{SERVER_TAG}** Server Tag "
+                f"is no longer equipped.\n\n"
                 f"🎭 **Role Removed:** <@&{TAG_ROLE_ID}>\n"
                 f"⏳ **Status:** Requalification required."
             ),
@@ -3382,30 +3488,32 @@ async def process_member(member: discord.Member):
 
         return
 
-    #
-    # ---------------------------------------
-    # User HAS the tag again
-    # ---------------------------------------
-    #
+    # -----------------------------------------
+    # USER HAS WILD TAG AGAIN
+    # -----------------------------------------
 
     if needs_requalify:
 
-        #
-        # Timer hasn't started yet
-        #
+        # -----------------------------------------
+        # START 7-DAY TIMER
+        # -----------------------------------------
 
         if waiting_since is None:
 
             await start_requalification(member.id)
 
-            unlock = int(time.time()) + (TAG_REQUALIFY_DAYS * 86400)
+            unlock = (
+                int(time.time())
+                + (TAG_REQUALIFY_DAYS * SECONDS_PER_DAY)
+            )
 
             await send_tag_log(
                 member,
                 "⏳ Requalification Started",
                 (
                     f"{member.mention}\n\n"
-                    f"The official **{SERVER_TAG}** Server Tag has been detected again.\n\n"
+                    f"The official **{SERVER_TAG}** Server Tag "
+                    f"has been detected again.\n\n"
                     f"🎭 **Role:** Pending\n"
                     f"🗓️ **Eligible On:** <t:{unlock}:F>\n"
                     f"⏰ <t:{unlock}:R>"
@@ -3415,41 +3523,42 @@ async def process_member(member: discord.Member):
 
             return
 
-        #
-        # Still waiting
-        #
+        # -----------------------------------------
+        # STILL WAITING
+        # -----------------------------------------
 
         if not requalification_complete(waiting_since):
+
             return
 
-        #
-        # Qualification complete
-        #
+        # -----------------------------------------
+        # 7 DAYS COMPLETED
+        # -----------------------------------------
 
         await finish_requalification(member.id)
 
         if not has_role:
+
             await give_tag_role(member)
 
         await send_tag_log(
             member,
-            "✅ Requalification Complete",
+            "🔄 Role Restored",
             (
                 f"{member.mention}\n\n"
-                f"The qualification period has been completed successfully.\n\n"
-                f"🎭 **Role Granted:** <@&{TAG_ROLE_ID}>"
+                f"The member is still eligible for the official "
+                f"**{SERVER_TAG}** Server Tag role.\n\n"
+                f"🎭 **Role Restored:** <@&{TAG_ROLE_ID}>\n"
+                f"📌 The 7-day requalification period has been completed."
             ),
-            discord.Color.green()
+            discord.Color.blurple()
         )
 
         return
 
-    #
-    # ---------------------------------------
-    # Qualified user missing the role
-    # (manual removal by admin, etc.)
-    # ---------------------------------------
-    #
+    # -----------------------------------------
+    # QUALIFIED USER BUT ROLE IS MISSING
+    # -----------------------------------------
 
     if not has_role:
 
@@ -3460,7 +3569,8 @@ async def process_member(member: discord.Member):
             "🔄 Role Restored",
             (
                 f"{member.mention}\n\n"
-                f"The member is still eligible for the official **{SERVER_TAG}** Server Tag role.\n\n"
+                f"The member is still eligible for the official "
+                f"**{SERVER_TAG}** Server Tag role.\n\n"
                 f"🎭 **Role Restored:** <@&{TAG_ROLE_ID}>\n"
                 f"📌 Missing role detected and restored automatically."
             ),
