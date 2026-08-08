@@ -2882,98 +2882,131 @@ async def get_server_tag(user_id: int):
 
     url = f"https://discord.com/api/v10/users/{user_id}"
 
-    try:
+    max_retries = 5
 
-        async with http_session.get(url) as response:
+    for attempt in range(max_retries):
 
-            # -----------------------------------------
-            # SUCCESS
-            # -----------------------------------------
+        try:
 
-            if response.status == 200:
+            async with http_session.get(url) as response:
 
-                data = await response.json()
+                # -----------------------------------------
+                # SUCCESS
+                # -----------------------------------------
 
-                primary = data.get("primary_guild")
+                if response.status == 200:
 
-                if not primary:
+                    data = await response.json()
+
+                    primary = data.get("primary_guild")
+
+                    # API successfully responded,
+                    # but user has no primary server tag.
+                    if not primary:
+
+                        return {
+                            "api_ok": True,
+                            "has_tag": False,
+                            "tag": None,
+                            "guild_id": None
+                        }
+
+                    guild_id = str(
+                        primary.get("identity_guild_id")
+                    )
+
+                    tag = primary.get("tag")
+
+                    has_tag = (
+                        guild_id == str(GUILD_ID)
+                        and
+                        tag == SERVER_TAG
+                    )
+
                     return {
-                        "success": True,
+                        "api_ok": True,
+                        "has_tag": has_tag,
+                        "tag": tag,
+                        "guild_id": guild_id
+                    }
+
+                # -----------------------------------------
+                # RATE LIMITED
+                # -----------------------------------------
+
+                elif response.status == 429:
+
+                    retry_after = response.headers.get(
+                        "Retry-After"
+                    )
+
+                    try:
+                        retry_after = float(retry_after)
+                    except (TypeError, ValueError):
+                        retry_after = 30
+
+                    print(
+                        f"⚠️ Discord API rate limit for "
+                        f"{user_id}. "
+                        f"Waiting {retry_after} seconds..."
+                    )
+
+                    await asyncio.sleep(retry_after)
+
+                    continue
+
+                # -----------------------------------------
+                # OTHER API ERROR
+                # -----------------------------------------
+
+                else:
+
+                    print(
+                        f"⚠️ Discord API returned "
+                        f"{response.status} for {user_id}"
+                    )
+
+                    return {
+                        "api_ok": False,
                         "has_tag": False,
                         "tag": None,
                         "guild_id": None
                     }
 
-                guild_id = str(
-                    primary.get("identity_guild_id")
-                )
-
-                tag = primary.get("tag")
-
-                has_tag = (
-                    guild_id == str(GUILD_ID)
-                    and
-                    tag == SERVER_TAG
-                )
-
-                return {
-                    "success": True,
-                    "has_tag": has_tag,
-                    "tag": tag,
-                    "guild_id": guild_id
-                }
-
-            # -----------------------------------------
-            # RATE LIMITED
-            # -----------------------------------------
-
-            if response.status == 429:
-
-                retry_after = response.headers.get(
-                    "Retry-After",
-                    "unknown"
-                )
-
-                print(
-                    f"⚠️ Discord API rate limit for "
-                    f"{user_id}. Retry-After: {retry_after}"
-                )
-
-                return {
-                    "success": False,
-                    "has_tag": None,
-                    "tag": None,
-                    "guild_id": None
-                }
-
-            # -----------------------------------------
-            # OTHER API ERROR
-            # -----------------------------------------
+        except Exception as e:
 
             print(
-                f"⚠️ Discord API returned "
-                f"{response.status} for {user_id}"
+                f"⚠️ Tag API error ({user_id}): {e}"
             )
 
+            if attempt < max_retries - 1:
+
+                await asyncio.sleep(2)
+
+                continue
+
             return {
-                "success": False,
-                "has_tag": None,
+                "api_ok": False,
+                "has_tag": False,
                 "tag": None,
                 "guild_id": None
             }
 
-    except Exception as e:
+    # -----------------------------------------
+    # ALL RETRIES FAILED
+    # -----------------------------------------
 
-        print(
-            f"⚠️ Tag API Error ({user_id}): {e}"
-        )
+    print(
+        f"⚠️ Could not verify Server Tag for {user_id}. "
+        f"Skipping this member."
+    )
 
-        return {
-            "success": False,
-            "has_tag": None,
-            "tag": None,
-            "guild_id": None
-        }
+    return {
+        "api_ok": False,
+        "has_tag": False,
+        "tag": None,
+        "guild_id": None
+    }
 
 @bot.tree.command(name="checktag", description="Check official server tag")
 async def checktag(interaction: discord.Interaction):
@@ -3083,8 +3116,9 @@ async def initial_process_member(member):
 
     result = await get_server_tag(member.id)
 
-    # API did not confirm the tag.
-    # During initial sync, DO NOT remove anything.
+    if not result["api_ok"]:
+        return False
+
     if not result["has_tag"]:
         return False
 
@@ -3342,7 +3376,7 @@ def requalification_complete(waiting_since: int) -> bool:
 async def process_member(member: discord.Member):
 
     if member.bot:
-        return
+        return "skipped"
 
     # -----------------------------------------
     # CHECK DISCORD API
@@ -3355,9 +3389,9 @@ async def process_member(member: discord.Member):
     # API FAILURE = DO NOTHING
     # -----------------------------------------
 
-    if not tag["success"]:
+    if not tag["api_ok"]:
 
-        return
+        return "api_failed"
 
     record = await get_tag_member(member.id)
 
@@ -3614,94 +3648,71 @@ async def send_tag_log(
         embed=embed
     )
 
-@tasks.loop(minutes=TAG_CHECK_INTERVAL)
+@tasks.loop(hours=1)
 async def tag_scanner():
 
     guild = bot.get_guild(GUILD_ID)
 
     if guild is None:
+        print("❌ Server Tag Scanner: Guild not found.")
         return
 
-    print("🏷️ Running hourly Server Tag check...")
+    print("========================================")
+    print("🏷️ Starting FULL HOURLY Server Tag scan")
+    print(f"👥 Members to check: {len(guild.members)}")
+    print("========================================")
 
     checked = 0
+    api_failed = 0
     errors = 0
+    start_time = time.time()
 
-    # -----------------------------------------
-    # 1. CHECK MEMBERS WHO HAVE THE ROLE
-    # -----------------------------------------
+    total_members = len(guild.members)
 
-    role = guild.get_role(TAG_ROLE_ID)
-
-    if role is not None:
-
-        for member in role.members:
-
-            if member.bot:
-                continue
-
-            try:
-
-                await process_member(member)
-
-                checked += 1
-
-            except Exception as e:
-
-                errors += 1
-
-                print(
-                    f"❌ Tag Role Check Error "
-                    f"({member.id}): {e}"
-                )
-
-    # -----------------------------------------
-    # 2. CHECK MEMBERS REQUALIFYING
-    # -----------------------------------------
-
-    async with aiosqlite.connect(DB_PATH) as db:
-
-        cursor = await db.execute(
-            """
-            SELECT user_id
-            FROM tag_members
-            WHERE needs_requalify = 1
-            """
-        )
-
-        waiting_members = await cursor.fetchall()
-
-    for row in waiting_members:
-
-        user_id = row[0]
-
-        member = guild.get_member(user_id)
-
-        if member is None:
-            continue
+    for member in guild.members:
 
         if member.bot:
             continue
 
         try:
 
-            await process_member(member)
+            result = await process_member(member)
 
             checked += 1
+
+            if result == "api_failed":
+                api_failed += 1
+
+            # Progress every 250 members
+            if checked % 250 == 0:
+
+                print(
+                    f"🏷️ Hourly scan progress: "
+                    f"{checked}/{total_members}"
+                )
+
+            # Small delay between API requests.
+            # This helps avoid hammering Discord.
+            await asyncio.sleep(0.5)
 
         except Exception as e:
 
             errors += 1
 
             print(
-                f"❌ Requalification Check Error "
+                f"❌ Hourly Tag Scan Error "
                 f"({member.id}): {e}"
             )
 
-    print(
-        f"✅ Hourly Server Tag check complete. "
-        f"Checked: {checked} | Errors: {errors}"
-    )
+    elapsed = int(time.time() - start_time)
+
+    print("========================================")
+    print("✅ FULL HOURLY Server Tag scan complete")
+    print(f"👥 Members checked: {checked}")
+    print(f"⚠️ API checks failed: {api_failed}")
+    print(f"❌ Errors: {errors}")
+    print(f"⏱️ Time: {elapsed} seconds")
+    print("========================================")
     
 if __name__ == "__main__":
     bot.run(TOKEN)
