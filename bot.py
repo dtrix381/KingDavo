@@ -107,7 +107,7 @@ CALL_CHANNEL_ID = 1373883150693830726
 SERVER_TAG = "WILD"
 GUILD_ID = 1176520509878439996
 TAG_ROLE_ID = 1535271894855712849
-TAG_LOG_CHANNEL_ID = 1535448213903904798
+TAG_LOG_CHANNEL_ID = 1535461027829780490
 TAG_CHECK_INTERVAL = 60      # minutes
 TAG_REQUALIFY_DAYS = 7
 SECONDS_PER_DAY = 86400
@@ -125,6 +125,10 @@ async def on_ready():
     if streamers:
         bot.add_view(StreamerRoleView(streamers))
 
+    # -----------------------------------------
+    # KICK SYSTEM
+    # -----------------------------------------
+
     if not check_stream.is_running():
         check_stream.start()
         print("▶️ Kick stream checker started")
@@ -133,24 +137,18 @@ async def on_ready():
         auto_scrape_slots.start()
         print("▶️ Auto slot scraper started (6h loop)")
 
-    await setup_tag_database()
-
-    global http_session
-
-    if http_session is None:
-        http_session = aiohttp.ClientSession(
-            headers={
-                "Authorization": f"Bot {TOKEN}"
-            }
-        )
-
     # -----------------------------------------
-    # SERVER TAG SYSTEM
+    # SERVER TAG DATABASE
     # -----------------------------------------
 
     await setup_tag_database()
 
+    # -----------------------------------------
+    # DISCORD API SESSION
+    # -----------------------------------------
+
     if http_session is None:
+
         http_session = aiohttp.ClientSession(
             headers={
                 "Authorization": f"Bot {TOKEN}"
@@ -167,6 +165,10 @@ async def on_ready():
 
     if initial_sync_complete != "1":
 
+        print(
+            "🏷️ No completed initial Server Tag sync found."
+        )
+
         await initial_tag_sync()
 
     else:
@@ -180,6 +182,7 @@ async def on_ready():
     # -----------------------------------------
 
     if not tag_scanner.is_running():
+
         tag_scanner.start()
 
         print(
@@ -187,11 +190,22 @@ async def on_ready():
             "(every 1 hour)"
         )
 
+    # -----------------------------------------
+    # BOT READY
+    # -----------------------------------------
+
     print(f"✅ Logged in as {bot.user}")
+
     try:
+
         synced = await bot.tree.sync()
-        print(f"🔁 Synced {len(synced)} command(s).")
+
+        print(
+            f"🔁 Synced {len(synced)} command(s)."
+        )
+
     except Exception as e:
+
         print("Sync error:", e)
 
 
@@ -2243,8 +2257,7 @@ async def check_stream():
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(PROXY_URL, timeout=10) as resp:
-                print("🌐 Kick status", resp.status, flush=True)
-
+                
                 if resp.status != 200:
                     return
 
@@ -3017,6 +3030,61 @@ async def finish_requalification(user_id: int):
 
         await db.commit()
 
+async def initial_process_member(member):
+
+    if member.bot:
+        return False
+
+    result = await get_server_tag(member.id)
+
+    # API did not confirm the tag.
+    # During initial sync, DO NOT remove anything.
+    if not result["has_tag"]:
+        return False
+
+    # Already has the role.
+    role = member.guild.get_role(TAG_ROLE_ID)
+
+    if role is None:
+        print("❌ Server Tag role not found.")
+        return False
+
+    if role in member.roles:
+        return False
+
+    # Give role immediately.
+    try:
+
+        await member.add_roles(
+            role,
+            reason="Initial Server Tag Sync"
+        )
+
+        await create_tag_member(member.id)
+
+        await send_tag_log(
+            member,
+            "🎉 Server Tag Role Granted",
+            (
+                f"{member.mention}\n\n"
+                f"Successfully qualified for the official "
+                f"**{SERVER_TAG}** Server Tag.\n\n"
+                f"🎭 **Role Granted:** {role.mention}"
+            ),
+            discord.Color.green()
+        )
+
+        return True
+
+    except Exception as e:
+
+        print(
+            f"❌ Initial role error "
+            f"({member.id}): {e}"
+        )
+
+        return False
+
 async def initial_tag_sync():
 
     guild = bot.get_guild(GUILD_ID)
@@ -3041,9 +3109,10 @@ async def initial_tag_sync():
 
         try:
 
-            result = await process_member(member)
+            # Check this member during the initial scan.
+            result = await initial_process_member(member)
 
-            if result == "role_granted":
+            if result:
                 roles_granted += 1
 
             processed += 1
@@ -3066,7 +3135,7 @@ async def initial_tag_sync():
 
     elapsed = int(time.time() - start_time)
 
-    # ONLY mark complete after the entire scan finishes
+    # ONLY mark complete after the entire scan finishes.
     await set_tag_setting(
         "initial_sync_complete",
         "1"
@@ -3079,6 +3148,7 @@ async def initial_tag_sync():
     print(f"❌ Errors: {errors}")
     print(f"⏱️ Time: {elapsed} seconds")
     print("========================================")
+
     
 async def setup_tag_database():
 
