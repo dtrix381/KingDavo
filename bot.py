@@ -3080,7 +3080,7 @@ async def initial_tag_sync():
     print(f"⏱️ Time: {elapsed} seconds")
     print("========================================")
     
-    async def setup_tag_database():
+async def setup_tag_database():
 
     async with aiosqlite.connect(DB_PATH) as db:
 
@@ -3113,6 +3113,7 @@ async def initial_tag_sync():
         await db.commit()
 
     print("✅ Tag database ready.")
+
 
 async def get_tag_setting(key: str):
 
