@@ -107,8 +107,8 @@ CALL_CHANNEL_ID = 1373883150693830726
 SERVER_TAG = "WILD"
 GUILD_ID = 1176520509878439996
 TAG_ROLE_ID = 1535271894855712849
-TAG_LOG_CHANNEL_ID = 1535272144173531206
-TAG_CHECK_INTERVAL = 5      # minutes
+TAG_LOG_CHANNEL_ID = 1535448213903904798
+TAG_CHECK_INTERVAL = 60      # minutes
 TAG_REQUALIFY_DAYS = 7
 SECONDS_PER_DAY = 86400
 http_session = None
@@ -142,9 +142,50 @@ async def on_ready():
             }
         )
 
+    # -----------------------------------------
+    # SERVER TAG SYSTEM
+    # -----------------------------------------
+
+    await setup_tag_database()
+
+    global http_session
+
+    if http_session is None:
+        http_session = aiohttp.ClientSession(
+            headers={
+                "Authorization": f"Bot {TOKEN}"
+            }
+        )
+
+    # -----------------------------------------
+    # ONE-TIME INITIAL SYNC
+    # -----------------------------------------
+
+    initial_sync_complete = await get_tag_setting(
+        "initial_sync_complete"
+    )
+
+    if initial_sync_complete != "1":
+
+        await initial_tag_sync()
+
+    else:
+
+        print(
+            "✅ Initial Server Tag sync already completed."
+        )
+
+    # -----------------------------------------
+    # START HOURLY SCANNER
+    # -----------------------------------------
+
     if not tag_scanner.is_running():
         tag_scanner.start()
-        print("🏷️ Server Tag scanner started")
+
+        print(
+            "🏷️ Server Tag hourly scanner started "
+            "(every 1 hour)"
+        )
 
     print(f"✅ Logged in as {bot.user}")
     try:
@@ -2976,15 +3017,22 @@ async def finish_requalification(user_id: int):
 
         await db.commit()
 
-@tasks.loop(minutes=TAG_CHECK_INTERVAL)
-async def tag_scanner():
+async def initial_tag_sync():
 
     guild = bot.get_guild(GUILD_ID)
 
     if guild is None:
+        print("❌ Server Tag Sync: Guild not found.")
         return
 
-    print("🔍 Scanning server tags...")
+    print("🏷️ Starting ONE-TIME Server Tag full sync...")
+    print(f"👥 Members to check: {len(guild.members)}")
+
+    processed = 0
+    roles_granted = 0
+    errors = 0
+
+    start_time = time.time()
 
     for member in guild.members:
 
@@ -2992,13 +3040,47 @@ async def tag_scanner():
             continue
 
         try:
-            await process_member(member)
+
+            result = await process_member(member)
+
+            if result == "role_granted":
+                roles_granted += 1
+
+            processed += 1
+
+            # Progress every 250 members
+            if processed % 250 == 0:
+                print(
+                    f"🏷️ Initial sync progress: "
+                    f"{processed}/{len(guild.members)}"
+                )
 
         except Exception as e:
 
-            print(f"Tag Scanner Error ({member.id}): {e}")
+            errors += 1
 
-async def setup_tag_database():
+            print(
+                f"❌ Initial Tag Sync Error "
+                f"({member.id}): {e}"
+            )
+
+    elapsed = int(time.time() - start_time)
+
+    # ONLY mark complete after the entire scan finishes
+    await set_tag_setting(
+        "initial_sync_complete",
+        "1"
+    )
+
+    print("========================================")
+    print("✅ Initial Server Tag Sync Complete")
+    print(f"👥 Members processed: {processed}")
+    print(f"🎭 Roles granted: {roles_granted}")
+    print(f"❌ Errors: {errors}")
+    print(f"⏱️ Time: {elapsed} seconds")
+    print("========================================")
+    
+    async def setup_tag_database():
 
     async with aiosqlite.connect(DB_PATH) as db:
 
@@ -3018,10 +3100,58 @@ async def setup_tag_database():
         )
         """)
 
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS tag_settings (
+
+            key TEXT PRIMARY KEY,
+
+            value TEXT
+
+        )
+        """)
+
         await db.commit()
 
     print("✅ Tag database ready.")
 
+async def get_tag_setting(key: str):
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        cursor = await db.execute(
+            """
+            SELECT value
+            FROM tag_settings
+            WHERE key = ?
+            """,
+            (key,)
+        )
+
+        row = await cursor.fetchone()
+
+        if row is None:
+            return None
+
+        return row[0]
+
+
+async def set_tag_setting(key: str, value: str):
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        await db.execute(
+            """
+            INSERT INTO tag_settings (key, value)
+            VALUES (?, ?)
+
+            ON CONFLICT(key)
+            DO UPDATE SET value = excluded.value
+            """,
+            (key, value)
+        )
+
+        await db.commit()
+        
 async def update_last_removed(user_id: int):
 
     async with aiosqlite.connect(DB_PATH) as db:
@@ -3303,5 +3433,94 @@ async def send_tag_log(
         embed=embed
     )
 
+@tasks.loop(minutes=TAG_CHECK_INTERVAL)
+async def tag_scanner():
+
+    guild = bot.get_guild(GUILD_ID)
+
+    if guild is None:
+        return
+
+    print("🏷️ Running hourly Server Tag check...")
+
+    checked = 0
+    errors = 0
+
+    # -----------------------------------------
+    # 1. CHECK MEMBERS WHO HAVE THE ROLE
+    # -----------------------------------------
+
+    role = guild.get_role(TAG_ROLE_ID)
+
+    if role is not None:
+
+        for member in role.members:
+
+            if member.bot:
+                continue
+
+            try:
+
+                await process_member(member)
+
+                checked += 1
+
+            except Exception as e:
+
+                errors += 1
+
+                print(
+                    f"❌ Tag Role Check Error "
+                    f"({member.id}): {e}"
+                )
+
+    # -----------------------------------------
+    # 2. CHECK MEMBERS REQUALIFYING
+    # -----------------------------------------
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        cursor = await db.execute(
+            """
+            SELECT user_id
+            FROM tag_members
+            WHERE needs_requalify = 1
+            """
+        )
+
+        waiting_members = await cursor.fetchall()
+
+    for row in waiting_members:
+
+        user_id = row[0]
+
+        member = guild.get_member(user_id)
+
+        if member is None:
+            continue
+
+        if member.bot:
+            continue
+
+        try:
+
+            await process_member(member)
+
+            checked += 1
+
+        except Exception as e:
+
+            errors += 1
+
+            print(
+                f"❌ Requalification Check Error "
+                f"({member.id}): {e}"
+            )
+
+    print(
+        f"✅ Hourly Server Tag check complete. "
+        f"Checked: {checked} | Errors: {errors}"
+    )
+    
 if __name__ == "__main__":
     bot.run(TOKEN)
