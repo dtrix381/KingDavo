@@ -4476,5 +4476,170 @@ async def wild_tag_giveaway(
     )
 
 
+# =========================
+# CLEAR CHANNEL
+# =========================
+
+class ClearChannelConfirmView(discord.ui.View):
+
+    def __init__(self, keep_messages: int):
+        super().__init__(timeout=60)
+        self.keep_messages = keep_messages
+
+    @discord.ui.button(
+        label="✅ Yes Clear",
+        style=discord.ButtonStyle.red
+    )
+    async def confirm_clear(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        if interaction.user.id != DTRIX_ID:
+            return await interaction.response.send_message(
+                "❌ Owner only.",
+                ephemeral=True
+            )
+
+        await interaction.response.edit_message(
+            content="🧹 Clearing channel...",
+            view=None
+        )
+
+        channel = interaction.channel
+
+        # -----------------------------------------
+        # GET ALL MESSAGES
+        # -----------------------------------------
+
+        messages = []
+
+        async for message in channel.history(
+            limit=None,
+            oldest_first=True
+        ):
+            messages.append(message)
+
+        # -----------------------------------------
+        # KEEP THE FIRST N MESSAGES
+        # -----------------------------------------
+
+        messages_to_delete = messages[self.keep_messages:]
+
+        if not messages_to_delete:
+
+            return await interaction.followup.send(
+                f"✅ Nothing to delete.\n"
+                f"The channel has {len(messages)} message(s), "
+                f"and you chose to keep {self.keep_messages}.",
+                ephemeral=True
+            )
+
+        # -----------------------------------------
+        # DELETE MESSAGES
+        # -----------------------------------------
+
+        deleted_count = 0
+
+        # Delete in batches of 100
+        for i in range(0, len(messages_to_delete), 100):
+
+            batch = messages_to_delete[i:i + 100]
+
+            try:
+
+                await channel.delete_messages(batch)
+
+                deleted_count += len(batch)
+
+            except discord.HTTPException as e:
+
+                # If bulk delete fails, delete individually
+                for message in batch:
+
+                    try:
+
+                        await message.delete()
+                        deleted_count += 1
+
+                    except discord.HTTPException:
+
+                        pass
+
+        # -----------------------------------------
+        # RESULT
+        # -----------------------------------------
+
+        await channel.send(
+            f"✅ **Channel cleared.**\n"
+            f"🗑️ Deleted: **{deleted_count}** messages\n"
+            f"📌 Kept: **{self.keep_messages}** message(s) at the top."
+        )
+
+    @discord.ui.button(
+        label="❌ Cancel",
+        style=discord.ButtonStyle.gray
+    )
+    async def cancel_clear(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        await interaction.response.edit_message(
+            content="❌ Cancelled.",
+            view=None
+        )
+
+
+@bot.tree.command(
+    name="clear_channel",
+    description="Clear channel while keeping the first messages"
+)
+@app_commands.describe(
+    keep="Number of oldest messages to keep"
+)
+async def clear_channel(
+    interaction: discord.Interaction,
+    keep: int = 0
+):
+
+    # -----------------------------------------
+    # OWNER CHECK
+    # -----------------------------------------
+
+    if interaction.user.id != GUILD_OWNER_ID:
+
+        return await interaction.response.send_message(
+            "❌ Admin only.",
+            ephemeral=True
+        )
+
+    # -----------------------------------------
+    # VALIDATE NUMBER
+    # -----------------------------------------
+
+    if keep < 0:
+
+        return await interaction.response.send_message(
+            "❌ Keep must be 0 or higher.",
+            ephemeral=True
+        )
+
+    # -----------------------------------------
+    # GET CHANNEL MESSAGE COUNT
+    # -----------------------------------------
+
+    await interaction.response.send_message(
+        f"⚠️ **Clear Channel Confirmation**\n\n"
+        f"📌 Messages to keep: **{keep}**\n"
+        f"🗑️ Everything after those messages will be deleted.\n\n"
+        f"Are you sure?",
+        view=ClearChannelConfirmView(keep),
+        ephemeral=True
+    )
+
+
 if __name__ == "__main__":
     bot.run(TOKEN)
