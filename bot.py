@@ -15,6 +15,7 @@ import requests
 import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
 import json
+import websockets
 
 PROVIDER_IMAGES = {
     "pragmatic": "https://cdn.discordapp.com/attachments/1283197229913608192/1362821484447399936/CvuaWH6WBTwAAAAASUVORK5CYII.png?ex=6a2cd729&is=6a2b85a9&hm=e8ef3da0bde4fbd77e5d2aa99ada5fdd66b0ac392035b4c79ddcefb5acef18f5",
@@ -113,10 +114,16 @@ TAG_REQUALIFY_DAYS = 7
 SECONDS_PER_DAY = 86400
 http_session = None
 
+GAMDOM_WS_URL = "wss://gamdom.com/socket.io/?EIO=3&transport=websocket"
+GAMDOM_BIG_WIN_CHANNEL_ID = 1536003420543000677  # CHANGE THIS
+GAMDOM_UNIT = 1500
+
+
 @bot.event
 async def on_ready():
 
     global http_session
+    global gamdom_ws_task
 
     bot.add_view(RegionRoleView())
 
@@ -136,6 +143,13 @@ async def on_ready():
     if not auto_scrape_slots.is_running():
         auto_scrape_slots.start()
         print("▶️ Auto slot scraper started (6h loop)")
+
+    if gamdom_ws_task is None or gamdom_ws_task.done():
+        gamdom_ws_task = asyncio.create_task(
+            gamdom_big_win_listener()
+        )
+
+        print("🎰 Gamdom Big Win listener started")
 
     # -----------------------------------------
     # SERVER TAG DATABASE
@@ -166,7 +180,7 @@ async def on_ready():
 
         http_session = aiohttp.ClientSession(
             headers={
-                "Authorization": f"Bot {TOKEN}"
+                "Authorization": f"Bot {DISCORD_BOT_TOKEN}"
             }
         )
 
@@ -2840,7 +2854,7 @@ async def send_slot_call(interaction: discord.Interaction, slot_value: str):
 async def auto_scrape_slots():
     print("🔄 Auto scraping slots...")
 
-    slot_urls = get_all_slot_urls()
+    slot_urls = await asyncio.to_thread(get_all_slot_urls)
     print(f"Found {len(slot_urls)} new slots to scrape.")
 
     for index, url in enumerate(slot_urls, 1):
@@ -4639,6 +4653,636 @@ async def clear_channel(
         view=ClearChannelConfirmView(keep),
         ephemeral=True
     )
+
+
+# ============================================================
+# GAMDOM BIG WIN LISTENER
+# ============================================================
+
+gamdom_ws_task = None
+
+# Time when the current WebSocket connection started
+gamdom_listener_start_time = None
+
+# Prevent the same Gamdom bet from being posted twice
+# IMPORTANT: DO NOT CLEAR THIS WHEN RECONNECTING
+gamdom_seen_wins = set()
+
+# Used to ignore the existing recent-bets snapshot
+gamdom_recent_feed_initialized = False
+
+
+async def gamdom_big_win_listener():
+
+    global gamdom_ws_task
+    global gamdom_listener_start_time
+    global gamdom_seen_wins
+    global gamdom_recent_feed_initialized
+
+    while True:
+
+        try:
+
+            async with websockets.connect(
+                GAMDOM_WS_URL,
+                origin="https://gamdom.com",
+                ping_interval=None
+            ) as ws:
+
+                # --------------------------------------------------------
+                # NEW CONNECTION START TIME
+                # --------------------------------------------------------
+
+                gamdom_listener_start_time = datetime.now(timezone.utc)
+
+                # IMPORTANT:
+                # Reset this for the new connection so the first
+                # recent-bets snapshot is ignored again.
+                gamdom_recent_feed_initialized = False
+
+                print(
+                    "✅ Connected to Gamdom WebSocket"
+                )
+
+                # --------------------------------------------------------
+                # JOIN GENERAL SOCKET.IO CHANNEL
+                # --------------------------------------------------------
+
+                await ws.send("40/general")
+
+                print(
+                    "📡 Listening for LIVE Gamdom wins..."
+                )
+
+                # ========================================================
+                # RECEIVE MESSAGES
+                # ========================================================
+
+                while True:
+
+                    message = await ws.recv()
+
+                    if not message:
+                        continue
+
+                    # ----------------------------------------------------
+                    # ONLY PROCESS GENERAL SOCKET.IO EVENTS
+                    # ----------------------------------------------------
+
+                    if not message.startswith("42/general,"):
+                        continue
+
+                    try:
+
+                        payload = json.loads(
+                            message[len("42/general,"):]
+                        )
+
+                    except json.JSONDecodeError:
+
+                        print(
+                            "⚠️ Could not decode Gamdom event"
+                        )
+
+                        continue
+
+                    if not isinstance(payload, list):
+                        continue
+
+                    if len(payload) < 2:
+                        continue
+
+                    event_name = payload[0]
+                    event_data = payload[1]
+
+                    # ====================================================
+                    # GENERAL STATS
+                    # ====================================================
+
+                    if event_name == "general_stats":
+
+                        if not isinstance(event_data, dict):
+                            continue
+
+                        live_bets = event_data.get(
+                            "liveBets",
+                            {}
+                        )
+
+                        if not isinstance(live_bets, dict):
+                            continue
+
+                        # ------------------------------------------------
+                        # RECENT BETS
+                        # ------------------------------------------------
+
+                        recents = live_bets.get(
+                            "recents",
+                            {}
+                        )
+
+                        if not isinstance(recents, dict):
+                            recents = {}
+
+                        all_bets = recents.get(
+                            "all",
+                            []
+                        )
+
+                        if not isinstance(all_bets, list):
+                            all_bets = []
+
+                        if not gamdom_recent_feed_initialized:
+
+                            for bet_data in all_bets:
+
+                                if not isinstance(
+                                    bet_data,
+                                    dict
+                                ):
+                                    continue
+
+                                win_id = bet_data.get(
+                                    "id"
+                                )
+
+                                if not win_id:
+
+                                    win_id = bet_data.get(
+                                        "sourceId"
+                                    )
+
+                                if win_id:
+
+                                    gamdom_seen_wins.add(
+                                        win_id
+                                    )
+
+                            gamdom_recent_feed_initialized = True
+
+                            continue
+
+                        # =================================================
+                        # PROCESS NEW BETS
+                        # =================================================
+
+                        for bet_data in all_bets:
+
+                            if not isinstance(
+                                bet_data,
+                                dict
+                            ):
+                                continue
+
+                            # ------------------------------------------------
+                            # GET BET ID
+                            # ------------------------------------------------
+
+                            win_id = bet_data.get(
+                                "id"
+                            )
+
+                            if not win_id:
+
+                                win_id = bet_data.get(
+                                    "sourceId"
+                                )
+
+                            if not win_id:
+
+                                print(
+                                    "⚠️ Gamdom bet has no ID, skipping"
+                                )
+
+                                continue
+
+                            # ------------------------------------------------
+                            # DUPLICATE CHECK
+                            # ------------------------------------------------
+
+                            if win_id in gamdom_seen_wins:
+
+                                continue
+
+                            # =================================================
+                            # GET WIN DATE
+                            # =================================================
+
+                            win_date = bet_data.get(
+                                "date"
+                            )
+
+                            if not win_date:
+
+                                print(
+                                    f"⚠️ New Gamdom bet has no date | "
+                                    f"ID={win_id}"
+                                )
+
+                                # Remember it so we don't repeatedly
+                                # process the same broken entry.
+                                gamdom_seen_wins.add(
+                                    win_id
+                                )
+
+                                continue
+
+                            # ------------------------------------------------
+                            # PARSE DATE
+                            # ------------------------------------------------
+
+                            try:
+
+                                win_time = datetime.fromisoformat(
+                                    win_date.replace(
+                                        "Z",
+                                        "+00:00"
+                                    )
+                                )
+
+                            except (
+                                ValueError,
+                                TypeError
+                            ):
+
+                                gamdom_seen_wins.add(
+                                    win_id
+                                )
+
+                                continue
+
+                            # ------------------------------------------------
+                            # MAKE SURE DATETIME IS UTC
+                            # ------------------------------------------------
+
+                            if win_time.tzinfo is None:
+
+                                win_time = win_time.replace(
+                                    tzinfo=timezone.utc
+                                )
+
+                            else:
+
+                                win_time = win_time.astimezone(
+                                    timezone.utc
+                                )
+
+                            if (
+                                gamdom_listener_start_time
+                                and
+                                win_time
+                                < gamdom_listener_start_time
+                            ):
+
+                                gamdom_seen_wins.add(
+                                    win_id
+                                )
+
+                                continue
+
+                            # ------------------------------------------------
+                            # MARK AS SEEN
+                            # ------------------------------------------------
+
+                            gamdom_seen_wins.add(
+                                win_id
+                            )
+
+                            # =================================================
+                            # RAW BET / PAYOUT
+                            # =================================================
+
+                            bet_amount = bet_data.get(
+                                "bet",
+                                0
+                            )
+
+                            payout = bet_data.get(
+                                "payout",
+                                0
+                            )
+
+                            # =================================================
+                            # CONVERT RAW VALUES TO USD
+                            # =================================================
+
+                            try:
+
+                                bet_value = float(
+                                    bet_amount or 0
+                                ) / GAMDOM_UNIT
+
+                            except (
+                                    ValueError,
+                                    TypeError
+                            ):
+
+                                bet_value = 0
+
+                            try:
+
+                                payout_value = float(
+                                    payout or 0
+                                ) / GAMDOM_UNIT
+
+                            except (
+                                    ValueError,
+                                    TypeError
+                            ):
+
+                                payout_value = 0
+
+                            # =================================================
+                            # CALCULATE ACTUAL PROFIT
+                            # =================================================
+
+                            profit = payout_value - bet_value
+
+                            # =================================================
+                            # USER
+                            # =================================================
+
+                            user = bet_data.get(
+                                "user",
+                                {}
+                            )
+
+                            if not isinstance(
+                                user,
+                                dict
+                            ):
+
+                                user = {}
+
+                            username = user.get(
+                                "username",
+                                "Unknown"
+                            )
+
+                            # =================================================
+                            # GAME
+                            # =================================================
+
+                            game_name = bet_data.get(
+                                "gameName",
+                                bet_data.get(
+                                    "game",
+                                    "Unknown"
+                                )
+                            )
+
+                            provider = bet_data.get(
+                                "gameProvider",
+                                "Unknown"
+                            )
+
+
+
+                            # --------------------------------------------------------
+                            # CONVERT GAMDOM RAW VALUES TO USD
+                            # --------------------------------------------------------
+
+                            try:
+
+                                bet_value = float(
+                                    bet_amount or 0
+                                ) / GAMDOM_UNIT
+
+                            except (
+                                    ValueError,
+                                    TypeError
+                            ):
+
+                                bet_value = 0
+
+                            try:
+
+                                payout_value = float(
+                                    payout or 0
+                                ) / GAMDOM_UNIT
+
+                            except (
+                                    ValueError,
+                                    TypeError
+                            ):
+
+                                payout_value = 0
+
+                            # --------------------------------------------------------
+                            # 500X WIN FILTER
+                            # --------------------------------------------------------
+
+                            if bet_value <= 0:
+                                continue
+
+                            win_multiplier = payout_value / bet_value
+
+                            if profit < 1000 and win_multiplier < 500:
+                                continue
+
+                            print(
+                                f"🔥 500X WIN DETECTED | "
+                                f"{username} | "
+                                f"{win_multiplier:.2f}x"
+                            )
+
+                            game_thumb = bet_data.get(
+                                "gameThumb"
+                            )
+
+                            # =================================================
+                            # DISCORD CHANNEL
+                            # =================================================
+
+                            channel = bot.get_channel(
+                                GAMDOM_BIG_WIN_CHANNEL_ID
+                            )
+
+                            if channel is None:
+
+                                print(
+                                    f"❌ Gamdom Discord channel "
+                                    f"{GAMDOM_BIG_WIN_CHANNEL_ID} "
+                                    f"not found"
+                                )
+
+                                continue
+
+                            # =================================================
+                            # EMBED
+                            # =================================================
+
+                            embed = discord.Embed(
+                                title="🔥 BIG WIN",
+                                description=(
+                                    f"**{username}** just won on Gamdom!"
+                                ),
+                                color=discord.Color.gold()
+                            )
+
+                            # ------------------------------------------------
+                            # GAME
+                            # ------------------------------------------------
+
+                            embed.add_field(
+                                name="🎰 Game",
+                                value=str(
+                                    game_name
+                                )[:1024],
+                                inline=True
+                            )
+
+                            # ------------------------------------------------
+                            # PROVIDER
+                            # ------------------------------------------------
+
+                            embed.add_field(
+                                name="🏢 Provider",
+                                value=str(
+                                    provider
+                                )[:1024],
+                                inline=True
+                            )
+
+                            # ------------------------------------------------
+                            # PROFIT
+                            # ------------------------------------------------
+
+                            embed.add_field(
+                                name="🔥 Multiplier",
+                                value=f"**{win_multiplier:,.2f}x**",
+                                inline=True
+                            )
+
+                            embed.add_field(
+                                name="💰 Profit",
+                                value=(
+                                    f"${profit:,.2f}"
+                                ),
+                                inline=True
+                            )
+
+                            # ------------------------------------------------
+                            # BET
+                            # ------------------------------------------------
+
+                            embed.add_field(
+                                name="🎲 Bet",
+                                value=(
+                                    f"${bet_value:,.2f}"
+                                ),
+                                inline=True
+                            )
+
+                            # ------------------------------------------------
+                            # PAYOUT
+                            # ------------------------------------------------
+
+                            embed.add_field(
+                                name="💵 Payout",
+                                value=(
+                                    f"${payout_value:,.2f}"
+                                ),
+                                inline=True
+                            )
+
+                            # =================================================
+                            # WIN TIME
+                            # =================================================
+                            #
+                            # Discord automatically converts this timestamp
+                            # to the viewer's local timezone.
+                            #
+                            # :F = full date/time
+                            # :R = relative time
+                            # =================================================
+
+                            embed.add_field(
+                                name="🕒 Won At",
+                                value=(
+                                    f"<t:{int(win_time.timestamp())}:F>\n"
+                                    f"<t:{int(win_time.timestamp())}:R>"
+                                ),
+                                inline=False
+                            )
+
+                            # =================================================
+                            # THUMBNAIL
+                            # =================================================
+
+                            if game_thumb and isinstance(game_thumb, str):
+
+                                game_thumb = game_thumb.strip()
+
+                                if game_thumb.startswith("/"):
+                                    game_thumb = "https://gamdom.com" + game_thumb
+
+                                if (
+                                        game_thumb.startswith("http://")
+                                        or game_thumb.startswith("https://")
+                                ):
+                                    embed.set_thumbnail(url=game_thumb)
+
+                            # =================================================
+                            # FOOTER
+                            # =================================================
+
+                            embed.set_footer(
+                                text="Powered By: WildLines Bot"
+                            )
+
+                            # =================================================
+                            # SEND TO DISCORD
+                            # =================================================
+
+                            try:
+
+                                await channel.send(
+                                    embed=embed
+                                )
+
+                                print(
+                                    f"✅ LIVE WIN EMBED SENT | "
+                                    f"{username} | "
+                                    f"profit=${profit:,.2f} | "
+                                    f"won={win_time.isoformat()}"
+                                )
+
+                            except Exception as e:
+
+                                print(
+                                    "❌ Failed to send Gamdom "
+                                    f"live win embed: {e}"
+                                )
+
+
+        # ============================================================
+        # LISTENER CANCELLED
+        # ============================================================
+
+        except asyncio.CancelledError:
+
+            print(
+                "🛑 Gamdom WebSocket listener stopped"
+            )
+
+            raise
+
+        # ============================================================
+        # CONNECTION ERROR
+        # ============================================================
+
+        except Exception as e:
+
+            print(
+                f"❌ Gamdom WebSocket error: {e}"
+            )
+
+            print(
+                "🔄 Reconnecting to Gamdom in 5 seconds..."
+            )
+
+            await asyncio.sleep(5)
 
 
 if __name__ == "__main__":
