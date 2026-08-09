@@ -4609,7 +4609,7 @@ async def clear_channel(
     # OWNER CHECK
     # -----------------------------------------
 
-    if interaction.user.id != GUILD_OWNER_ID:
+    if interaction.user.id != DTRIX_ID:
 
         return await interaction.response.send_message(
             "❌ Admin only.",
