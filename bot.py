@@ -5077,11 +5077,11 @@ async def gamdom_big_win_listener():
 
                             win_multiplier = payout_value / bet_value
 
-                            if profit < 1000 and win_multiplier < 500:
+                            if profit < 3000 and win_multiplier < 1000:
                                 continue
 
                             print(
-                                f"🔥 500X WIN DETECTED | "
+                                f"🔥 BIG WIN DETECTED | "
                                 f"{username} | "
                                 f"{win_multiplier:.2f}x"
                             )
