@@ -5309,6 +5309,22 @@ class StreamPrizeView(discord.ui.View):
             ephemeral=True
         )
 
+    
+    @discord.ui.button(
+        label="Raffle",
+        emoji="🎟️",
+        style=discord.ButtonStyle.primary,
+        custom_id="stream_prize_raffle"
+    )
+    async def raffle(
+            self,
+            interaction: discord.Interaction,
+            button: discord.ui.Button
+    ):
+        await interaction.response.send_modal(
+            RaffleModal()
+        )
+        
     @discord.ui.button(
         label="Twitter Giveaway",
         emoji="🐦",
@@ -5645,7 +5661,77 @@ class FreeSpinsModal(
             prize_data
         )
 
+class RaffleModal(
+    discord.ui.Modal,
+    title="🎟️ Raffle"
+):
 
+    prize = discord.ui.TextInput(
+        label="Prize",
+        placeholder="Example: $50",
+        required=True,
+        max_length=100
+    )
+
+    def __init__(self, winner_id: int):
+        super().__init__()
+
+        self.winner_id = winner_id
+
+    async def on_submit(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        member = interaction.guild.get_member(
+            self.winner_id
+        )
+
+        if member is None:
+
+            await interaction.response.send_message(
+                "❌ That member is no longer in the server.",
+                ephemeral=True
+            )
+
+            return
+
+        prize_value = parse_money(
+            self.prize.value
+        )
+
+        if prize_value is None:
+
+            await interaction.response.send_message(
+                "❌ Invalid prize amount.\n"
+                "Example: `$50`",
+                ephemeral=True
+            )
+
+            return
+
+        prize_data = {
+            "winner_id": member.id,
+            "winner_name": member.display_name,
+            "winner_mention": member.mention,
+
+            "prize_type": "Raffle",
+
+            "slot_name": None,
+            "quantity": None,
+            "bet_size": None,
+
+            "prize_value": prize_value,
+            "wild_points": None,
+
+            "kick_link": None
+        }
+
+        await show_prize_confirmation(
+            interaction,
+            prize_data
+        )
+        
 class TwitterGiveawayModal(
     discord.ui.Modal,
     title="🐦 Twitter Giveaway"
@@ -6659,7 +6745,9 @@ async def approve_prize(
         # RECORD MONTHLY PRIZE
         # -----------------------------------------
 
-        await record_monthly_prize(
+        await record_prize_totals(
+            winner_id=winner_id,
+            winner_name=winner_name,
             prize_type=prize_type,
             prize_value=prize_value or 0,
             wild_points=wild_points or 0,
@@ -7182,7 +7270,9 @@ async def log_prize_denied(
         embed=embed
     )
 
-async def record_monthly_prize(
+async def record_prize_totals(
+    winner_id: int,
+    winner_name: str,
     prize_type: str,
     prize_value: float = 0,
     wild_points: int = 0,
@@ -7195,10 +7285,15 @@ async def record_monthly_prize(
     year = now.year
     month = now.month
 
+    # -----------------------------------------
+    # VALUES
+    # -----------------------------------------
+
     free_spins = 0.0
     twitter_giveaway = 0.0
     guess_balance = 0.0
     tournament = 0.0
+    raffle = 0.0
     plinko_prize = 0.0
     plinko_wild_points = 0
     total_prize_value = 0.0
@@ -7216,7 +7311,7 @@ async def record_monthly_prize(
         total_prize_value = free_spins
 
     # -----------------------------------------
-    # TWITTER GIVEAWAY
+    # TWITTER
     # -----------------------------------------
 
     elif prize_type == "Twitter Giveaway":
@@ -7225,7 +7320,7 @@ async def record_monthly_prize(
         total_prize_value = prize_value
 
     # -----------------------------------------
-    # GUESS THE BALANCE
+    # GUESS BALANCE
     # -----------------------------------------
 
     elif prize_type == "Guess the Balance":
@@ -7243,27 +7338,38 @@ async def record_monthly_prize(
         total_prize_value = prize_value
 
     # -----------------------------------------
+    # RAFFLE
+    # -----------------------------------------
+
+    elif prize_type == "Raffle":
+
+        raffle = prize_value
+        total_prize_value = prize_value
+
+    # -----------------------------------------
     # PLINKO
     # -----------------------------------------
 
     elif prize_type == "Plinko":
 
-        # Wild Points Plinko
         if wild_points and wild_points > 0:
 
             plinko_wild_points = wild_points
 
-        # Cash Prize Plinko
         elif prize_value:
 
             plinko_prize = prize_value
             total_prize_value = prize_value
 
     # -----------------------------------------
-    # UPDATE MONTHLY TOTAL
+    # DATABASE
     # -----------------------------------------
 
     async with aiosqlite.connect(DB_PATH) as db:
+
+        # =====================================
+        # MONTHLY TOTALS
+        # =====================================
 
         await db.execute(
             """
@@ -7274,11 +7380,12 @@ async def record_monthly_prize(
                 twitter_giveaway,
                 guess_balance,
                 tournament,
+                raffle,
                 plinko_prize,
                 plinko_wild_points,
                 total_prize_value
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 
             ON CONFLICT(year, month)
             DO UPDATE SET
@@ -7294,6 +7401,9 @@ async def record_monthly_prize(
 
                 tournament =
                     tournament + excluded.tournament,
+
+                raffle =
+                    raffle + excluded.raffle,
 
                 plinko_prize =
                     plinko_prize + excluded.plinko_prize,
@@ -7311,14 +7421,83 @@ async def record_monthly_prize(
                 twitter_giveaway,
                 guess_balance,
                 tournament,
+                raffle,
                 plinko_prize,
                 plinko_wild_points,
                 total_prize_value
             )
         )
 
-        await db.commit()
+        # =====================================
+        # PLAYER LIFETIME TOTALS
+        # =====================================
 
+        await db.execute(
+            """
+            INSERT INTO prize_player_totals (
+                winner_id,
+                winner_name,
+                free_spins,
+                twitter_giveaway,
+                guess_balance,
+                tournament,
+                raffle,
+                plinko_prize,
+                plinko_wild_points,
+                total_prize_value,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+
+            ON CONFLICT(winner_id)
+            DO UPDATE SET
+
+                winner_name =
+                    excluded.winner_name,
+
+                free_spins =
+                    free_spins + excluded.free_spins,
+
+                twitter_giveaway =
+                    twitter_giveaway + excluded.twitter_giveaway,
+
+                guess_balance =
+                    guess_balance + excluded.guess_balance,
+
+                tournament =
+                    tournament + excluded.tournament,
+
+                raffle =
+                    raffle + excluded.raffle,
+
+                plinko_prize =
+                    plinko_prize + excluded.plinko_prize,
+
+                plinko_wild_points =
+                    plinko_wild_points + excluded.plinko_wild_points,
+
+                total_prize_value =
+                    total_prize_value + excluded.total_prize_value,
+
+                updated_at =
+                    excluded.updated_at
+            """,
+            (
+                winner_id,
+                winner_name,
+                free_spins,
+                twitter_giveaway,
+                guess_balance,
+                tournament,
+                raffle,
+                plinko_prize,
+                plinko_wild_points,
+                total_prize_value,
+                now.isoformat()
+            )
+        )
+
+        await db.commit()
 
 if __name__ == "__main__":
     bot.run(TOKEN)
