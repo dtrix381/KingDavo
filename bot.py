@@ -74,6 +74,7 @@ manual_games = {}  # Stores {channel_id: (players, provider_name)}
 
 PRIZE_APPROVAL_CHANNEL_ID = 1536611050722426930
 PRIZE_LOG_CHANNEL_ID = 1536535520946032744
+PRIZE_APPROVER_ID = 1376017792209387520
 
 EXCLUDED_LEADERBOARD_USERS = {
     878253813553844254,
@@ -6691,14 +6692,19 @@ class PrizeApprovalView(discord.ui.View):
         custom_id="prize_approval_sent"
     )
     async def prizes_sent(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button
+            self,
+            interaction: discord.Interaction,
+            button: discord.ui.Button
     ):
+        if interaction.user.id != PRIZE_APPROVER_ID:
+            await interaction.response.send_message(
+                "❌ Only the authorized prize approver can approve this prize.",
+                ephemeral=True
+            )
 
-        await approve_prize(
-            interaction
-        )
+            return
+
+        await approve_prize(interaction)
 
     @discord.ui.button(
         label="Prizes Denied",
@@ -6707,21 +6713,20 @@ class PrizeApprovalView(discord.ui.View):
         custom_id="prize_approval_denied"
     )
     async def prizes_denied(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button
+            self,
+            interaction: discord.Interaction,
+            button: discord.ui.Button
     ):
 
-        await interaction.response.send_message(
-            "⚠️ **Deny this prize?**\n\n"
-            "This prize will be deleted from the "
-            "pending prize channel.\n\n"
-            "Are you sure?",
-            view=PrizeDeniedConfirmationView(
-                interaction.message.id
-            ),
-            ephemeral=True
-        )
+        if interaction.user.id != PRIZE_APPROVER_ID:
+            await interaction.response.send_message(
+                "❌ Only the authorized prize approver can deny this prize.",
+                ephemeral=True
+            )
+
+            return
+
+        await deny_prize(interaction)
 
 
 async def get_pending_prize_by_message(
