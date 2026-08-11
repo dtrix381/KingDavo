@@ -5321,8 +5321,10 @@ class StreamPrizeView(discord.ui.View):
             interaction: discord.Interaction,
             button: discord.ui.Button
     ):
-        await interaction.response.send_modal(
-            RaffleModal()
+        await interaction.response.send_message(
+            "🎟️ **Raffle**\n\nSelect the winner below.",
+            view=PrizeMemberSelectView("Raffle"),
+            ephemeral=True
         )
         
     @discord.ui.button(
@@ -5488,6 +5490,12 @@ class PrizeMemberSelectView(discord.ui.View):
 
             await interaction.response.send_modal(
                 FreeSpinsModal(member.id)
+            )
+
+        elif self.prize_type == "Raffle":
+
+            await interaction.response.send_modal(
+                RaffleModal(member.id)
             )
 
         elif self.prize_type == "Twitter Giveaway":
