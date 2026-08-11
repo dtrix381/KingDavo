@@ -72,7 +72,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 JOIN_EMOJI = "🎰"
 manual_games = {}  # Stores {channel_id: (players, provider_name)}
 
-PRIZE_APPROVAL_CHANNEL_ID = 1176520511392579670
+PRIZE_APPROVAL_CHANNEL_ID = 1536611050722426930
 PRIZE_LOG_CHANNEL_ID = 1536535520946032744
 
 EXCLUDED_LEADERBOARD_USERS = {
