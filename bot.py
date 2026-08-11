@@ -5508,10 +5508,16 @@ class PrizeMemberSelectView(discord.ui.View):
             )
             return
 
-        if self.prize_type == "Free Spins":
+        if self.prize_type in (
+                "Free Spins",
+                "Plinko - Free Spins"
+        ):
 
             await interaction.response.send_modal(
-                FreeSpinsModal(member.id)
+                FreeSpinsModal(
+                    self.selected_member_id,
+                    self.prize_type
+                )
             )
 
         elif self.prize_type == "Raffle":
@@ -5593,6 +5599,24 @@ class PlinkoChoiceView(discord.ui.View):
             view=PrizeMemberSelectView("Plinko Wild Points")
         )
 
+    @discord.ui.button(
+        label="Free Spins",
+        emoji="🎰",
+        style=discord.ButtonStyle.primary,
+        custom_id="plinko_free_spins"
+    )
+    async def free_spins(
+            self,
+            interaction: discord.Interaction,
+            button: discord.ui.Button
+    ):
+        await interaction.response.send_message(
+            "🎰 **Plinko - Free Spins**\n\n"
+            "Select the winner below.",
+            view=PrizeMemberSelectView("Plinko - Free Spins"),
+            ephemeral=True
+        )
+
 
 class FreeSpinsModal(
     discord.ui.Modal,
@@ -5620,10 +5644,15 @@ class FreeSpinsModal(
         max_length=20
     )
 
-    def __init__(self, winner_id: int):
+    def __init__(
+            self,
+            winner_id: int,
+            prize_type: str = "Free Spins"
+    ):
         super().__init__()
 
         self.winner_id = winner_id
+        self.prize_type = prize_type
 
     async def on_submit(
         self,
@@ -5680,7 +5709,7 @@ class FreeSpinsModal(
             "winner_name": member.display_name,
             "winner_mention": member.mention,
 
-            "prize_type": "Free Spins",
+            "prize_type": self.prize_type,
 
             "slot_name": self.slot.value.strip(),
             "quantity": quantity,
@@ -6227,7 +6256,7 @@ class PrizeConfirmationView(discord.ui.View):
         prize_type = self.prize_data["prize_type"]
         winner_id = self.prize_data["winner_id"]
 
-        if prize_type == "Free Spins":
+        if prize_type in ("Free Spins", "Plinko - Free Spins"):
 
             await interaction.response.send_modal(
                 FreeSpinsModal(winner_id)
@@ -6445,7 +6474,7 @@ async def reopen_prize_form(
     prize_type = prize_data["prize_type"]
     winner_id = prize_data["winner_id"]
 
-    if prize_type == "Free Spins":
+    if prize_type in ("Free Spins", "Plinko - Free Spins"):
 
         await interaction.followup.send_modal(
             FreeSpinsModal(winner_id)
@@ -6986,7 +7015,7 @@ async def log_prize_sent(
     # FREE SPINS
     # -----------------------------------------
 
-    if prize_type == "Free Spins":
+    if prize_type in ("Free Spins", "Plinko - Free Spins"):
 
         embed.add_field(
             name="🎰 Slot",
@@ -7325,7 +7354,7 @@ async def log_prize_denied(
     # FREE SPINS
     # -----------------------------------------
 
-    if prize_type == "Free Spins":
+    if prize_type in ("Free Spins", "Plinko - Free Spins"):
 
         embed.add_field(
             name="🎰 Slot",
@@ -7426,7 +7455,7 @@ async def record_prize_totals(
     # FREE SPINS
     # -----------------------------------------
 
-    if prize_type == "Free Spins":
+    if prize_type in ("Free Spins", "Plinko - Free Spins"):
 
         if quantity is not None and bet_size is not None:
 
