@@ -72,6 +72,9 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 JOIN_EMOJI = "🎰"
 manual_games = {}  # Stores {channel_id: (players, provider_name)}
 
+PRIZE_APPROVAL_CHANNEL_ID = 1176520511392579670
+PRIZE_LOG_CHANNEL_ID = 1536535520946032744
+
 EXCLUDED_LEADERBOARD_USERS = {
     878253813553844254,
     850665803161534484,
@@ -125,7 +128,23 @@ async def on_ready():
     global http_session
     global gamdom_ws_task
 
+    print(f"✅ Logged in as {bot.user}")
+
+    try:
+
+        synced = await bot.tree.sync()
+
+        print(
+            f"🔁 Synced {len(synced)} command(s)."
+        )
+
+    except Exception as e:
+
+        print("Sync error:", e)
+
     bot.add_view(RegionRoleView())
+    bot.add_view(StreamPrizeView())
+    bot.add_view(PrizeApprovalView())
 
     streamers = await load_streamers()
 
@@ -218,24 +237,6 @@ async def on_ready():
             "🏷️ Server Tag hourly scanner started "
             "(every 1 hour)"
         )
-
-    # -----------------------------------------
-    # BOT READY
-    # -----------------------------------------
-
-    print(f"✅ Logged in as {bot.user}")
-
-    try:
-
-        synced = await bot.tree.sync()
-
-        print(
-            f"🔁 Synced {len(synced)} command(s)."
-        )
-
-    except Exception as e:
-
-        print("Sync error:", e)
 
 
 @bot.event
@@ -5077,7 +5078,7 @@ async def gamdom_big_win_listener():
 
                             win_multiplier = payout_value / bet_value
 
-                            if profit < 3000 and win_multiplier < 1000:
+                            if profit < 5000 and win_multiplier < 1000:
                                 continue
 
                             print(
@@ -5283,6 +5284,2040 @@ async def gamdom_big_win_listener():
             )
 
             await asyncio.sleep(5)
+
+
+class StreamPrizeView(discord.ui.View):
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Free Spins",
+        emoji="🎰",
+        style=discord.ButtonStyle.primary,
+        custom_id="stream_prize_free_spins"
+    )
+    async def free_spins(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        await interaction.response.send_message(
+            "🎰 **Free Spins**\n\nSelect the winner below.",
+            view=PrizeMemberSelectView("Free Spins"),
+            ephemeral=True
+        )
+
+    @discord.ui.button(
+        label="Twitter Giveaway",
+        emoji="🐦",
+        style=discord.ButtonStyle.primary,
+        custom_id="stream_prize_twitter"
+    )
+    async def twitter_giveaway(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        await interaction.response.send_message(
+            "🐦 **Twitter Giveaway**\n\nSelect the winner below.",
+            view=PrizeMemberSelectView("Twitter Giveaway"),
+            ephemeral=True
+        )
+
+    @discord.ui.button(
+        label="Guess the Balance",
+        emoji="💰",
+        style=discord.ButtonStyle.primary,
+        custom_id="stream_prize_guess_balance"
+    )
+    async def guess_balance(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        await interaction.response.send_message(
+            "💰 **Guess the Balance**\n\nSelect the winner below.",
+            view=PrizeMemberSelectView("Guess the Balance"),
+            ephemeral=True
+        )
+
+    @discord.ui.button(
+        label="Tournament",
+        emoji="🏆",
+        style=discord.ButtonStyle.primary,
+        custom_id="stream_prize_tournament"
+    )
+    async def tournament(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        await interaction.response.send_message(
+            "🏆 **Tournament**\n\nSelect the winner below.",
+            view=PrizeMemberSelectView("Tournament"),
+            ephemeral=True
+        )
+
+    @discord.ui.button(
+        label="Plinko",
+        emoji="🎯",
+        style=discord.ButtonStyle.primary,
+        custom_id="stream_prize_plinko"
+    )
+    async def plinko(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        await interaction.response.send_message(
+            "🎯 **Plinko**\n\nWhat did the winner receive?",
+            view=PlinkoChoiceView(),
+            ephemeral=True
+        )
+
+
+def get_member_from_input(guild: discord.Guild, value: str):
+    """
+    Accepts:
+    @User
+    <@123456789>
+    <@!123456789>
+    123456789
+
+    Returns discord.Member or None.
+    """
+
+    value = value.strip()
+
+    # Remove Discord mention formatting
+    if value.startswith("<@") and value.endswith(">"):
+        value = value.replace("<@", "")
+        value = value.replace("<@!", "")
+        value = value.replace(">", "")
+
+    # Try Discord ID
+    if value.isdigit():
+        return guild.get_member(int(value))
+
+    # Try username/display name
+    value_lower = value.lower()
+
+    for member in guild.members:
+
+        if member.name.lower() == value_lower:
+            return member
+
+        if member.display_name.lower() == value_lower:
+            return member
+
+    return None
+
+def parse_money(value: str):
+
+    try:
+
+        cleaned = (
+            value
+            .strip()
+            .replace("$", "")
+            .replace(",", "")
+        )
+
+        amount = float(cleaned)
+
+        if amount <= 0:
+            return None
+
+        return round(amount, 2)
+
+    except (ValueError, TypeError):
+        return None
+
+
+class PrizeMemberSelectView(discord.ui.View):
+
+    def __init__(self, prize_type: str):
+        super().__init__(timeout=300)
+
+        self.prize_type = prize_type
+
+    @discord.ui.select(
+        cls=discord.ui.UserSelect,
+        placeholder="👤 Select the prize winner...",
+        min_values=1,
+        max_values=1
+    )
+    async def select_member(
+            self,
+            interaction: discord.Interaction,
+            select: discord.ui.UserSelect
+    ):
+
+        member = select.values[0]
+
+        if not isinstance(member, discord.Member):
+            await interaction.response.send_message(
+                "❌ Please select a member from this server.",
+                ephemeral=True
+            )
+            return
+
+        if self.prize_type == "Free Spins":
+
+            await interaction.response.send_modal(
+                FreeSpinsModal(member.id)
+            )
+
+        elif self.prize_type == "Twitter Giveaway":
+
+            await interaction.response.send_modal(
+                TwitterGiveawayModal(member.id)
+            )
+
+        elif self.prize_type == "Guess the Balance":
+
+            await interaction.response.send_modal(
+                GuessBalanceModal(member.id)
+            )
+
+        elif self.prize_type == "Tournament":
+
+            await interaction.response.send_modal(
+                TournamentModal(member.id)
+            )
+
+        elif self.prize_type == "Plinko Prize":
+
+            await interaction.response.send_modal(
+                PlinkoPrizeModal(member.id)
+            )
+
+        elif self.prize_type == "Plinko Wild Points":
+
+            await interaction.response.send_modal(
+                PlinkoWildPointsModal(member.id)
+            )
+
+class PlinkoChoiceView(discord.ui.View):
+
+    def __init__(self):
+        super().__init__(timeout=300)
+
+    @discord.ui.button(
+        label="Prize",
+        emoji="💰",
+        style=discord.ButtonStyle.success
+    )
+    async def prize(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        await interaction.response.edit_message(
+            content="💰 **Plinko Prize**\n\nSelect the winner below.",
+            view=PrizeMemberSelectView("Plinko Prize")
+        )
+
+    @discord.ui.button(
+        label="Wild Points",
+        emoji="💎",
+        style=discord.ButtonStyle.primary
+    )
+    async def wild_points(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        await interaction.response.edit_message(
+            content="💎 **Plinko Wild Points**\n\nSelect the winner below.",
+            view=PrizeMemberSelectView("Plinko Wild Points")
+        )
+
+
+class FreeSpinsModal(
+    discord.ui.Modal,
+    title="🎰 Free Spins Prize"
+):
+
+    slot = discord.ui.TextInput(
+        label="Slot",
+        placeholder="Example: Sweet Bonanza",
+        required=True,
+        max_length=100
+    )
+
+    quantity = discord.ui.TextInput(
+        label="Quantity",
+        placeholder="Example: 20",
+        required=True,
+        max_length=10
+    )
+
+    bet_size = discord.ui.TextInput(
+        label="Bet Size",
+        placeholder="Example: 0.20",
+        required=True,
+        max_length=20
+    )
+
+    def __init__(self, winner_id: int):
+        super().__init__()
+
+        self.winner_id = winner_id
+
+    async def on_submit(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        member = interaction.guild.get_member(
+            self.winner_id
+        )
+
+        if member is None:
+            await interaction.response.send_message(
+                "❌ That member is no longer in the server.",
+                ephemeral=True
+            )
+            return
+
+        try:
+            quantity = int(self.quantity.value)
+
+            if quantity <= 0:
+                raise ValueError
+
+        except ValueError:
+            await interaction.response.send_message(
+                "❌ Quantity must be a positive whole number.",
+                ephemeral=True
+            )
+            return
+
+        try:
+            bet_size = float(
+                self.bet_size.value.replace("$", "").strip()
+            )
+
+            if bet_size <= 0:
+                raise ValueError
+
+        except ValueError:
+            await interaction.response.send_message(
+                "❌ Bet Size must be a positive number.\n"
+                "Example: `0.20`",
+                ephemeral=True
+            )
+            return
+
+        prize_value = round(
+            quantity * bet_size,
+            2
+        )
+
+        prize_data = {
+            "winner_id": member.id,
+            "winner_name": member.display_name,
+            "winner_mention": member.mention,
+
+            "prize_type": "Free Spins",
+
+            "slot_name": self.slot.value.strip(),
+            "quantity": quantity,
+            "bet_size": bet_size,
+
+            "prize_value": prize_value,
+            "wild_points": None,
+
+            "kick_link": None
+        }
+
+        await show_prize_confirmation(
+            interaction,
+            prize_data
+        )
+
+
+class TwitterGiveawayModal(
+    discord.ui.Modal,
+    title="🐦 Twitter Giveaway"
+):
+
+    prize = discord.ui.TextInput(
+        label="Prize",
+        placeholder="Example: $50",
+        required=True,
+        max_length=100
+    )
+
+    def __init__(self, winner_id: int):
+        super().__init__()
+
+        self.winner_id = winner_id
+
+    async def on_submit(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        member = interaction.guild.get_member(
+            self.winner_id
+        )
+
+        if member is None:
+            await interaction.response.send_message(
+                "❌ That member is no longer in the server.",
+                ephemeral=True
+            )
+            return
+
+        prize_value = parse_money(
+            self.prize.value
+        )
+
+        if prize_value is None:
+            await interaction.response.send_message(
+                "❌ Invalid prize amount.\n"
+                "Example: `$50`",
+                ephemeral=True
+            )
+            return
+
+        prize_data = {
+            "winner_id": member.id,
+            "winner_name": member.display_name,
+            "winner_mention": member.mention,
+
+            "prize_type": "Twitter Giveaway",
+
+            "slot_name": None,
+            "quantity": None,
+            "bet_size": None,
+
+            "prize_value": prize_value,
+            "wild_points": None,
+
+            "kick_link": None
+        }
+
+        await show_prize_confirmation(
+            interaction,
+            prize_data
+        )
+
+
+class GuessBalanceModal(
+    discord.ui.Modal,
+    title="💰 Guess the Balance"
+):
+
+    prize = discord.ui.TextInput(
+        label="Prize",
+        placeholder="Example: $100",
+        required=True,
+        max_length=100
+    )
+
+    def __init__(self, winner_id: int):
+        super().__init__()
+
+        self.winner_id = winner_id
+
+    async def on_submit(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        member = interaction.guild.get_member(
+            self.winner_id
+        )
+
+        if member is None:
+            await interaction.response.send_message(
+                "❌ That member is no longer in the server.",
+                ephemeral=True
+            )
+            return
+
+        prize_value = parse_money(
+            self.prize.value
+        )
+
+        if prize_value is None:
+            await interaction.response.send_message(
+                "❌ Invalid prize amount.\n"
+                "Example: `$100`",
+                ephemeral=True
+            )
+            return
+
+        prize_data = {
+            "winner_id": member.id,
+            "winner_name": member.display_name,
+            "winner_mention": member.mention,
+
+            "prize_type": "Guess the Balance",
+
+            "slot_name": None,
+            "quantity": None,
+            "bet_size": None,
+
+            "prize_value": prize_value,
+            "wild_points": None,
+
+            "kick_link": None
+        }
+
+        await show_prize_confirmation(
+            interaction,
+            prize_data
+        )
+
+
+class TournamentModal(
+    discord.ui.Modal,
+    title="🏆 Tournament Prize"
+):
+
+    prize = discord.ui.TextInput(
+        label="Prize",
+        placeholder="Example: $250",
+        required=True,
+        max_length=100
+    )
+
+    def __init__(self, winner_id: int):
+        super().__init__()
+
+        self.winner_id = winner_id
+
+    async def on_submit(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        member = interaction.guild.get_member(
+            self.winner_id
+        )
+
+        if member is None:
+            await interaction.response.send_message(
+                "❌ That member is no longer in the server.",
+                ephemeral=True
+            )
+            return
+
+        prize_value = parse_money(
+            self.prize.value
+        )
+
+        if prize_value is None:
+            await interaction.response.send_message(
+                "❌ Invalid prize amount.\n"
+                "Example: `$250`",
+                ephemeral=True
+            )
+            return
+
+        prize_data = {
+            "winner_id": member.id,
+            "winner_name": member.display_name,
+            "winner_mention": member.mention,
+
+            "prize_type": "Tournament",
+
+            "slot_name": None,
+            "quantity": None,
+            "bet_size": None,
+
+            "prize_value": prize_value,
+            "wild_points": None,
+
+            "kick_link": None
+        }
+
+        await show_prize_confirmation(
+            interaction,
+            prize_data
+        )
+
+
+class PlinkoPrizeModal(
+    discord.ui.Modal,
+    title="🎯 Plinko Prize"
+):
+
+    prize = discord.ui.TextInput(
+        label="Prize",
+        placeholder="Example: $50",
+        required=True,
+        max_length=100
+    )
+
+    def __init__(self, winner_id: int):
+        super().__init__()
+
+        self.winner_id = winner_id
+
+    async def on_submit(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        member = interaction.guild.get_member(
+            self.winner_id
+        )
+
+        if member is None:
+            await interaction.response.send_message(
+                "❌ That member is no longer in the server.",
+                ephemeral=True
+            )
+            return
+
+        prize_value = parse_money(
+            self.prize.value
+        )
+
+        if prize_value is None:
+            await interaction.response.send_message(
+                "❌ Invalid prize amount.\n"
+                "Example: `$50`",
+                ephemeral=True
+            )
+            return
+
+        prize_data = {
+            "winner_id": member.id,
+            "winner_name": member.display_name,
+            "winner_mention": member.mention,
+
+            "prize_type": "Plinko",
+
+            "slot_name": None,
+            "quantity": None,
+            "bet_size": None,
+
+            "prize_value": prize_value,
+            "wild_points": None,
+
+            "kick_link": None
+        }
+
+        await show_prize_confirmation(
+            interaction,
+            prize_data
+        )
+
+class PlinkoWildPointsModal(
+    discord.ui.Modal,
+    title="🎯 Plinko Wild Points"
+):
+
+    wild_points = discord.ui.TextInput(
+        label="Wild Points",
+        placeholder="Example: 5000",
+        required=True,
+        max_length=20
+    )
+
+    def __init__(self, winner_id: int):
+        super().__init__()
+
+        self.winner_id = winner_id
+
+    async def on_submit(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        member = interaction.guild.get_member(
+            self.winner_id
+        )
+
+        if member is None:
+            await interaction.response.send_message(
+                "❌ That member is no longer in the server.",
+                ephemeral=True
+            )
+            return
+
+        try:
+            wild_points = int(
+                self.wild_points.value.replace(",", "").strip()
+            )
+
+            if wild_points <= 0:
+                raise ValueError
+
+        except ValueError:
+            await interaction.response.send_message(
+                "❌ Wild Points must be a positive whole number.",
+                ephemeral=True
+            )
+            return
+
+        prize_data = {
+            "winner_id": member.id,
+            "winner_name": member.display_name,
+            "winner_mention": member.mention,
+
+            "prize_type": "Plinko",
+
+            "slot_name": None,
+            "quantity": None,
+            "bet_size": None,
+
+            "prize_value": None,
+            "wild_points": wild_points
+        }
+
+        await show_prize_confirmation(
+            interaction,
+            prize_data
+        )
+
+
+class PrizeConfirmationView(discord.ui.View):
+
+    def __init__(self, prize_data):
+        super().__init__(timeout=300)
+
+        self.prize_data = prize_data
+
+    @discord.ui.button(
+        label="Yes",
+        emoji="✅",
+        style=discord.ButtonStyle.success
+    )
+    async def confirm(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        # Disable buttons immediately
+        for item in self.children:
+            item.disabled = True
+
+        await interaction.response.edit_message(
+            content="✅ Prize confirmed!",
+            embed=None,
+            view=self
+        )
+
+        # Continue to Part 5
+        await create_pending_prize(
+            interaction,
+            self.prize_data
+        )
+
+    @discord.ui.button(
+        label="No",
+        emoji="❌",
+        style=discord.ButtonStyle.danger
+    )
+    async def cancel(
+            self,
+            interaction: discord.Interaction,
+            button: discord.ui.Button
+    ):
+
+        prize_type = self.prize_data["prize_type"]
+        winner_id = self.prize_data["winner_id"]
+
+        if prize_type == "Free Spins":
+
+            await interaction.response.send_modal(
+                FreeSpinsModal(winner_id)
+            )
+
+        elif prize_type == "Twitter Giveaway":
+
+            await interaction.response.send_modal(
+                TwitterGiveawayModal(winner_id)
+            )
+
+        elif prize_type == "Guess the Balance":
+
+            await interaction.response.send_modal(
+                GuessBalanceModal(winner_id)
+            )
+
+        elif prize_type == "Tournament":
+
+            await interaction.response.send_modal(
+                TournamentModal(winner_id)
+            )
+
+        elif prize_type == "Plinko":
+
+            if self.prize_data.get("wild_points") is not None:
+
+                await interaction.response.send_modal(
+                    PlinkoWildPointsModal(winner_id)
+                )
+
+            else:
+
+                await interaction.response.send_modal(
+                    PlinkoPrizeModal(winner_id)
+                )
+
+
+@bot.tree.command(
+    name="stream_prizes",
+    description="Create the WildLines Stream Winners prize panel."
+)
+async def stream_prizes(
+    interaction: discord.Interaction
+):
+
+    # Only DTRIX can use this command
+    if interaction.user.id != DTRIX_ID:
+        await interaction.response.send_message(
+            "❌ You are not authorized to use this command.",
+            ephemeral=True
+        )
+        return
+
+    embed = discord.Embed(
+        title="WildLines Stream Winners",
+        description=(
+            "Use the buttons below to record prizes won by viewers "
+            "during the stream.\n\n"
+            "Select the appropriate prize type and fill out the form. "
+            "The prize will then go through the confirmation process "
+            "before being posted for approval."
+        ),
+        color=discord.Color.gold()
+    )
+
+    embed.add_field(
+        name="🎰 Free Spins",
+        value=(
+            "Record free spins including the slot, "
+            "quantity and bet size."
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="🐦 Twitter Giveaway",
+        value="Record a Twitter giveaway prize.",
+        inline=False
+    )
+
+    embed.add_field(
+        name="💰 Guess the Balance",
+        value="Record a Guess the Balance prize.",
+        inline=False
+    )
+
+    embed.add_field(
+        name="🏆 Tournament",
+        value="Record a tournament prize.",
+        inline=False
+    )
+
+    embed.add_field(
+        name="🎯 Plinko",
+        value="Record either a cash prize or Wild Points.",
+        inline=False
+    )
+
+    embed.set_footer(
+        text="Prize records require confirmation before being submitted."
+    )
+
+    view = StreamPrizeView()
+
+    await interaction.response.send_message(
+        embed=embed,
+        view=view
+    )
+
+
+async def show_prize_confirmation(
+    interaction: discord.Interaction,
+    prize_data: dict
+):
+
+    embed = discord.Embed(
+        title="⚠️ Confirm Prize",
+        description=(
+            "Please review the prize information below "
+            "before continuing."
+        ),
+        color=discord.Color.orange()
+    )
+
+    embed.add_field(
+        name="👤 Winner",
+        value=prize_data["winner_mention"],
+        inline=False
+    )
+
+    embed.add_field(
+        name="🎁 Prize Type",
+        value=prize_data["prize_type"],
+        inline=True
+    )
+
+    # Free Spins
+    if prize_data["prize_type"] == "Free Spins":
+
+        embed.add_field(
+            name="🎰 Slot",
+            value=prize_data["slot_name"],
+            inline=True
+        )
+
+        embed.add_field(
+            name="🔢 Quantity",
+            value=str(prize_data["quantity"]),
+            inline=True
+        )
+
+        embed.add_field(
+            name="💵 Bet Size",
+            value=f"${prize_data['bet_size']:.2f}",
+            inline=True
+        )
+
+        embed.add_field(
+            name="💰 Total Prize Value",
+            value=f"${prize_data['prize_value']:.2f}",
+            inline=True
+        )
+
+    # Cash prizes
+    elif prize_data["prize_value"] is not None:
+
+        embed.add_field(
+            name="💰 Prize",
+            value=f"${prize_data['prize_value']:.2f}",
+            inline=True
+        )
+
+    # Wild Points
+    elif prize_data["wild_points"] is not None:
+
+        embed.add_field(
+            name="💎 Wild Points",
+            value=f"{prize_data['wild_points']:,}",
+            inline=True
+        )
+
+    embed.set_footer(
+        text="Is all of the information correct?"
+    )
+
+    view = PrizeConfirmationView(
+        prize_data
+    )
+
+    await interaction.response.send_message(
+        embed=embed,
+        view=view,
+        ephemeral=True
+    )
+
+
+async def reopen_prize_form(
+    interaction: discord.Interaction,
+    prize_data: dict
+):
+
+    prize_type = prize_data["prize_type"]
+    winner_id = prize_data["winner_id"]
+
+    if prize_type == "Free Spins":
+
+        await interaction.followup.send_modal(
+            FreeSpinsModal(winner_id)
+        )
+
+    elif prize_type == "Twitter Giveaway":
+
+        await interaction.followup.send_modal(
+            TwitterGiveawayModal(winner_id)
+        )
+
+    elif prize_type == "Guess the Balance":
+
+        await interaction.followup.send_modal(
+            GuessBalanceModal(winner_id)
+        )
+
+    elif prize_type == "Tournament":
+
+        await interaction.followup.send_modal(
+            TournamentModal(winner_id)
+        )
+
+    elif prize_type == "Plinko":
+
+        # Determine which Plinko form to reopen
+        if prize_data.get("wild_points") is not None:
+
+            await interaction.followup.send_modal(
+                PlinkoWildPointsModal(winner_id)
+            )
+
+        else:
+
+            await interaction.followup.send_modal(
+                PlinkoPrizeModal(winner_id)
+            )
+
+
+async def create_pending_prize(
+    interaction: discord.Interaction,
+    prize_data: dict
+):
+
+    channel = interaction.guild.get_channel(
+        PRIZE_APPROVAL_CHANNEL_ID
+    )
+
+    if channel is None:
+
+        await interaction.followup.send(
+            "❌ Prize approval channel could not be found.",
+            ephemeral=True
+        )
+
+        return
+
+    now = datetime.now(timezone.utc)
+
+    embed = discord.Embed(
+        title="🎁 Prize Pending Approval",
+        description=(
+            "A new stream prize is waiting for approval."
+        ),
+        color=discord.Color.orange(),
+        timestamp=now
+    )
+
+    winner = interaction.guild.get_member(
+        prize_data["winner_id"]
+    )
+
+    if winner:
+        embed.set_thumbnail(
+            url=winner.display_avatar.url
+        )
+
+    embed.add_field(
+        name="👤 Winner",
+        value=prize_data["winner_mention"],
+        inline=False
+    )
+
+    embed.add_field(
+        name="🎁 Prize Type",
+        value=prize_data["prize_type"],
+        inline=True
+    )
+
+    # -----------------------------------------
+    # FREE SPINS
+    # -----------------------------------------
+
+    if prize_data["prize_type"] == "Free Spins":
+
+        embed.add_field(
+            name="🎰 Slot",
+            value=prize_data["slot_name"],
+            inline=True
+        )
+
+        embed.add_field(
+            name="🔢 Quantity",
+            value=str(prize_data["quantity"]),
+            inline=True
+        )
+
+        embed.add_field(
+            name="💵 Bet Size",
+            value=f"${prize_data['bet_size']:.2f}",
+            inline=True
+        )
+
+        embed.add_field(
+            name="💰 Total Prize Value",
+            value=f"${prize_data['prize_value']:.2f}",
+            inline=True
+        )
+
+    # -----------------------------------------
+    # CASH PRIZE
+    # -----------------------------------------
+
+    elif prize_data.get("prize_value") is not None:
+
+        embed.add_field(
+            name="💰 Prize",
+            value=f"${prize_data['prize_value']:.2f}",
+            inline=True
+        )
+
+    # -----------------------------------------
+    # WILD POINTS
+    # -----------------------------------------
+
+    elif prize_data.get("wild_points") is not None:
+
+        embed.add_field(
+            name="💎 Wild Points",
+            value=f"{prize_data['wild_points']:,}",
+            inline=True
+        )
+
+    embed.add_field(
+        name="⏳ Status",
+        value="**Pending Approval**",
+        inline=False
+    )
+
+    embed.set_footer(
+        text=f"Submitted by {interaction.user.display_name}"
+    )
+
+    view = PrizeApprovalView()
+
+    message = await channel.send(
+        embed=embed,
+        view=view
+    )
+
+    # -----------------------------------------
+    # SAVE TO DATABASE
+    # -----------------------------------------
+
+    now_string = now.isoformat()
+
+    await save_pending_prize(
+        prize_data,
+        channel.id,
+        message.id,
+        now_string
+    )
+
+    await interaction.followup.send(
+        "✅ Prize submitted for approval!",
+        ephemeral=True
+    )
+
+
+async def save_pending_prize(
+    prize_data: dict,
+    channel_id: int,
+    message_id: int,
+    created_at: str
+):
+
+    now = datetime.now(timezone.utc)
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        await db.execute(
+            """
+            INSERT INTO prize_awards (
+                winner_id,
+                winner_name,
+                prize_type,
+                slot_name,
+                quantity,
+                bet_size,
+                prize_value,
+                wild_points,
+                kick_link,
+                approved_by,
+                status,
+                pending_channel_id,
+                pending_message_id,
+                created_at,
+                approved_at,
+                month,
+                year
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                prize_data["winner_id"],
+                prize_data["winner_name"],
+                prize_data["prize_type"],
+                prize_data.get("slot_name"),
+                prize_data.get("quantity"),
+                prize_data.get("bet_size"),
+                prize_data.get("prize_value"),
+                prize_data.get("wild_points"),
+                prize_data.get("kick_link"),
+                None,
+                "pending",
+                channel_id,
+                message_id,
+                created_at,
+                None,
+                now.month,
+                now.year
+            )
+        )
+
+        await db.commit()
+
+
+class PrizeApprovalView(discord.ui.View):
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Prizes Sent",
+        emoji="🟢",
+        style=discord.ButtonStyle.success,
+        custom_id="prize_approval_sent"
+    )
+    async def prizes_sent(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        await approve_prize(
+            interaction
+        )
+
+    @discord.ui.button(
+        label="Prizes Denied",
+        emoji="🔴",
+        style=discord.ButtonStyle.danger,
+        custom_id="prize_approval_denied"
+    )
+    async def prizes_denied(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        await interaction.response.send_message(
+            "⚠️ **Deny this prize?**\n\n"
+            "This prize will be deleted from the "
+            "pending prize channel.\n\n"
+            "Are you sure?",
+            view=PrizeDeniedConfirmationView(
+                interaction.message.id
+            ),
+            ephemeral=True
+        )
+
+
+async def get_pending_prize_by_message(
+    message_id: int
+):
+
+    cursor = await db.execute(
+        """
+        SELECT *
+        FROM prize_awards
+        WHERE pending_message_id = ?
+        AND status = 'pending'
+        LIMIT 1
+        """,
+        (message_id,)
+    )
+
+    row = await cursor.fetchone()
+
+    await cursor.close()
+
+    return row
+
+async def approve_prize(
+    interaction: discord.Interaction
+):
+
+    message_id = interaction.message.id
+
+    # -----------------------------------------
+    # FIND PENDING PRIZE
+    # -----------------------------------------
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        cursor = await db.execute(
+            """
+            SELECT
+                id,
+                winner_id,
+                winner_name,
+                prize_type,
+                slot_name,
+                quantity,
+                bet_size,
+                prize_value,
+                wild_points,
+                kick_link,
+                approved_by,
+                status,
+                pending_channel_id,
+                pending_message_id,
+                created_at,
+                approved_at,
+                month,
+                year
+            FROM prize_awards
+            WHERE pending_message_id = ?
+            AND status = 'pending'
+            LIMIT 1
+            """,
+            (message_id,)
+        )
+
+        row = await cursor.fetchone()
+
+        await cursor.close()
+
+        if row is None:
+
+            await interaction.response.send_message(
+                "❌ This prize is no longer pending.",
+                ephemeral=True
+            )
+
+            return
+
+        (
+            prize_id,
+            winner_id,
+            winner_name,
+            prize_type,
+            slot_name,
+            quantity,
+            bet_size,
+            prize_value,
+            wild_points,
+            kick_link,
+            old_approved_by,
+            status,
+            pending_channel_id,
+            pending_message_id,
+            created_at,
+            old_approved_at,
+            old_month,
+            old_year
+        ) = row
+
+        # -----------------------------------------
+        # APPROVER
+        # -----------------------------------------
+
+        approver = interaction.user
+
+        now = datetime.now(timezone.utc)
+
+        approved_at = now.isoformat()
+
+        # -----------------------------------------
+        # UPDATE DATABASE
+        # -----------------------------------------
+
+        await db.execute(
+            """
+            UPDATE prize_awards
+            SET
+                approved_by = ?,
+                status = 'sent',
+                approved_at = ?,
+                month = ?,
+                year = ?
+            WHERE id = ?
+            """,
+            (
+                approver.id,
+                approved_at,
+                now.month,
+                now.year,
+                prize_id
+            )
+        )
+
+        await db.commit()
+
+        # -----------------------------------------
+        # RECORD MONTHLY PRIZE
+        # -----------------------------------------
+
+        await record_monthly_prize(
+            prize_type=prize_type,
+            prize_value=prize_value or 0,
+            wild_points=wild_points or 0,
+            quantity=quantity,
+            bet_size=bet_size
+        )
+
+    # -----------------------------------------
+    # SEND LOG
+    # -----------------------------------------
+
+    await log_prize_sent(
+        interaction.guild,
+        winner_id=winner_id,
+        winner_name=winner_name,
+        prize_type=prize_type,
+        slot_name=slot_name,
+        quantity=quantity,
+        bet_size=bet_size,
+        prize_value=prize_value,
+        wild_points=wild_points,
+        kick_link=kick_link,
+        approved_by=approver
+    )
+
+    # -----------------------------------------
+    # DELETE PENDING APPROVAL MESSAGE
+    # -----------------------------------------
+
+    try:
+
+        await interaction.message.delete()
+
+    except discord.NotFound:
+
+        pass
+
+    except discord.Forbidden:
+
+        pass
+
+    # -----------------------------------------
+    # CONFIRM TO APPROVER
+    # -----------------------------------------
+
+    await interaction.response.send_message(
+        "✅ **Prize approved and sent!**\n\n"
+        "The pending prize has been removed from "
+        "the approval channel.",
+        ephemeral=True
+    )
+
+async def log_prize_sent(
+    guild: discord.Guild,
+    winner_id: int,
+    winner_name: str,
+    prize_type: str,
+    slot_name: str | None,
+    quantity: int | None,
+    bet_size: float | None,
+    prize_value: float | None,
+    wild_points: int | None,
+    kick_link: str | None,
+    approved_by: discord.Member
+):
+
+    channel = guild.get_channel(
+        PRIZE_LOG_CHANNEL_ID
+    )
+
+    if channel is None:
+        return
+
+    winner = guild.get_member(winner_id)
+
+    if winner:
+
+        winner_text = winner.mention
+
+    else:
+
+        winner_text = f"<@{winner_id}>"
+
+    embed = discord.Embed(
+        title="💰 Prizes Sent",
+        description=(
+            "A prize has been approved and sent to the winner."
+        ),
+        color=discord.Color.green(),
+        timestamp=datetime.now(timezone.utc)
+    )
+
+    winner = guild.get_member(winner_id)
+
+    if winner:
+        embed.set_thumbnail(
+            url=winner.display_avatar.url
+        )
+
+    embed.add_field(
+        name="👤 Winner",
+        value=winner_text,
+        inline=False
+    )
+
+    embed.add_field(
+        name="🎁 Prize Type",
+        value=prize_type,
+        inline=True
+    )
+
+    # -----------------------------------------
+    # FREE SPINS
+    # -----------------------------------------
+
+    if prize_type == "Free Spins":
+
+        embed.add_field(
+            name="🎰 Slot",
+            value=slot_name or "N/A",
+            inline=True
+        )
+
+        embed.add_field(
+            name="🔢 Quantity",
+            value=str(quantity or 0),
+            inline=True
+        )
+
+        embed.add_field(
+            name="💵 Bet Size",
+            value=f"${bet_size:.2f}"
+            if bet_size is not None
+            else "N/A",
+            inline=True
+        )
+
+        embed.add_field(
+            name="💰 Prize Value",
+            value=f"${prize_value:.2f}"
+            if prize_value is not None
+            else "N/A",
+            inline=True
+        )
+
+    # -----------------------------------------
+    # CASH PRIZE
+    # -----------------------------------------
+
+    elif prize_value is not None:
+
+        embed.add_field(
+            name="💰 Prize",
+            value=f"${prize_value:.2f}",
+            inline=True
+        )
+
+    # -----------------------------------------
+    # WILD POINTS
+    # -----------------------------------------
+
+    if wild_points is not None:
+
+        embed.add_field(
+            name="💎 Wild Points",
+            value=f"{wild_points:,}",
+            inline=True
+        )
+
+    # -----------------------------------------
+    # KICK LINK
+    # -----------------------------------------
+
+    if kick_link:
+
+        embed.add_field(
+            name="🎥 Kick",
+            value=kick_link,
+            inline=False
+        )
+
+    # -----------------------------------------
+    # APPROVED BY
+    # -----------------------------------------
+
+    embed.add_field(
+        name="👤 Approved By",
+        value=approved_by.mention,
+        inline=False
+    )
+
+    embed.set_footer(
+        text="WildLines Stream Prizes"
+    )
+
+    await channel.send(
+        embed=embed
+    )
+
+
+class PrizeDeniedConfirmationView(
+    discord.ui.View
+):
+
+    def __init__(self, message_id: int):
+        super().__init__(timeout=60)
+
+        self.message_id = message_id
+
+    @discord.ui.button(
+        label="Yes, Deny Prize",
+        emoji="🔴",
+        style=discord.ButtonStyle.danger
+    )
+    async def confirm_denied(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        await deny_prize(
+            interaction,
+            self.message_id
+        )
+
+    @discord.ui.button(
+        label="Cancel",
+        emoji="❌",
+        style=discord.ButtonStyle.secondary
+    )
+    async def cancel_denied(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        await interaction.response.edit_message(
+            content="❌ Prize denial cancelled.",
+            view=None
+        )
+
+
+async def deny_prize(
+    interaction: discord.Interaction,
+    message_id: int
+):
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        cursor = await db.execute(
+            """
+            SELECT
+                id,
+                winner_id,
+                winner_name,
+                prize_type,
+                slot_name,
+                quantity,
+                bet_size,
+                prize_value,
+                wild_points,
+                kick_link,
+                status
+            FROM prize_awards
+            WHERE pending_message_id = ?
+            AND status = 'pending'
+            LIMIT 1
+            """,
+            (message_id,)
+        )
+
+        row = await cursor.fetchone()
+
+        await cursor.close()
+
+        if row is None:
+
+            await interaction.response.edit_message(
+                content="❌ This prize is no longer pending.",
+                view=None
+            )
+
+            return
+
+        (
+            prize_id,
+            winner_id,
+            winner_name,
+            prize_type,
+            slot_name,
+            quantity,
+            bet_size,
+            prize_value,
+            wild_points,
+            kick_link,
+            status
+        ) = row
+
+        # -----------------------------------------
+        # UPDATE DATABASE
+        # -----------------------------------------
+
+        await db.execute(
+            """
+            UPDATE prize_awards
+            SET
+                status = 'denied'
+            WHERE id = ?
+            """,
+            (prize_id,)
+        )
+
+        await db.commit()
+
+    # -----------------------------------------
+    # DELETE APPROVAL MESSAGE
+    # -----------------------------------------
+
+    try:
+
+        approval_message = await interaction.channel.fetch_message(
+            message_id
+        )
+
+        await approval_message.delete()
+
+    except discord.NotFound:
+
+        pass
+
+    except discord.Forbidden:
+
+        pass
+
+    # -----------------------------------------
+    # UPDATE EPHEMERAL CONFIRMATION
+    # -----------------------------------------
+
+    await interaction.response.edit_message(
+        content="🔴 **Prize denied and removed.**",
+        view=None
+    )
+
+    # -----------------------------------------
+    # SEND DENIED LOG
+    # -----------------------------------------
+
+    await log_prize_denied(
+        interaction.guild,
+        winner_id=winner_id,
+        winner_name=winner_name,
+        prize_type=prize_type,
+        slot_name=slot_name,
+        quantity=quantity,
+        bet_size=bet_size,
+        prize_value=prize_value,
+        wild_points=wild_points,
+        kick_link=kick_link,
+        denied_by=interaction.user
+    )
+
+    # -----------------------------------------
+    # DELETE APPROVAL MESSAGE
+    # -----------------------------------------
+
+    try:
+
+        approval_message = await interaction.channel.fetch_message(
+            message_id
+        )
+
+        await approval_message.delete()
+
+    except discord.NotFound:
+
+        pass
+
+    except discord.Forbidden:
+
+        pass
+
+    # -----------------------------------------
+    # CONFIRM TO MODERATOR
+    # -----------------------------------------
+
+    await interaction.response.edit_message(
+        content="🔴 **Prize denied and removed.**",
+        view=None
+    )
+
+
+async def log_prize_denied(
+    guild: discord.Guild,
+    winner_id: int,
+    winner_name: str,
+    prize_type: str,
+    slot_name: str | None,
+    quantity: int | None,
+    bet_size: float | None,
+    prize_value: float | None,
+    wild_points: int | None,
+    kick_link: str | None,
+    denied_by: discord.Member
+):
+
+    channel = guild.get_channel(
+        PRIZE_LOG_CHANNEL_ID
+    )
+
+    if channel is None:
+        return
+
+    winner = guild.get_member(winner_id)
+
+    if winner:
+
+        winner_text = winner.mention
+
+    else:
+
+        winner_text = f"<@{winner_id}>"
+
+    embed = discord.Embed(
+        title="🔴 Prizes Denied",
+        description=(
+            "A prize submission was denied."
+        ),
+        color=discord.Color.red(),
+        timestamp=datetime.now(timezone.utc)
+    )
+
+    winner = guild.get_member(winner_id)
+
+    if winner:
+        embed.set_thumbnail(
+            url=winner.display_avatar.url
+        )
+
+    embed.add_field(
+        name="👤 Winner",
+        value=winner_text,
+        inline=False
+    )
+
+    embed.add_field(
+        name="🎁 Prize Type",
+        value=prize_type,
+        inline=True
+    )
+
+    # -----------------------------------------
+    # FREE SPINS
+    # -----------------------------------------
+
+    if prize_type == "Free Spins":
+
+        embed.add_field(
+            name="🎰 Slot",
+            value=slot_name or "N/A",
+            inline=True
+        )
+
+        embed.add_field(
+            name="🔢 Quantity",
+            value=str(quantity or 0),
+            inline=True
+        )
+
+        embed.add_field(
+            name="💵 Bet Size",
+            value=f"${bet_size:.2f}"
+            if bet_size is not None
+            else "N/A",
+            inline=True
+        )
+
+        embed.add_field(
+            name="💰 Prize Value",
+            value=f"${prize_value:.2f}"
+            if prize_value is not None
+            else "N/A",
+            inline=True
+        )
+
+    elif prize_value is not None:
+
+        embed.add_field(
+            name="💰 Prize",
+            value=f"${prize_value:.2f}",
+            inline=True
+        )
+
+    if wild_points is not None:
+
+        embed.add_field(
+            name="💎 Wild Points",
+            value=f"{wild_points:,}",
+            inline=True
+        )
+
+    if kick_link:
+
+        embed.add_field(
+            name="🎥 Kick",
+            value=kick_link,
+            inline=False
+        )
+
+    embed.add_field(
+        name="👤 Denied By",
+        value=denied_by.mention,
+        inline=False
+    )
+
+    embed.set_footer(
+        text="WildLines Stream Prizes"
+    )
+
+    await channel.send(
+        embed=embed
+    )
+
+async def record_monthly_prize(
+    prize_type: str,
+    prize_value: float = 0,
+    wild_points: int = 0,
+    quantity: int | None = None,
+    bet_size: float | None = None
+):
+
+    now = datetime.now(timezone.utc)
+
+    year = now.year
+    month = now.month
+
+    free_spins = 0.0
+    twitter_giveaway = 0.0
+    guess_balance = 0.0
+    tournament = 0.0
+    plinko_prize = 0.0
+    plinko_wild_points = 0
+    total_prize_value = 0.0
+
+    # -----------------------------------------
+    # FREE SPINS
+    # -----------------------------------------
+
+    if prize_type == "Free Spins":
+
+        if quantity is not None and bet_size is not None:
+
+            free_spins = quantity * bet_size
+
+        total_prize_value = free_spins
+
+    # -----------------------------------------
+    # TWITTER GIVEAWAY
+    # -----------------------------------------
+
+    elif prize_type == "Twitter Giveaway":
+
+        twitter_giveaway = prize_value
+        total_prize_value = prize_value
+
+    # -----------------------------------------
+    # GUESS THE BALANCE
+    # -----------------------------------------
+
+    elif prize_type == "Guess the Balance":
+
+        guess_balance = prize_value
+        total_prize_value = prize_value
+
+    # -----------------------------------------
+    # TOURNAMENT
+    # -----------------------------------------
+
+    elif prize_type == "Tournament":
+
+        tournament = prize_value
+        total_prize_value = prize_value
+
+    # -----------------------------------------
+    # PLINKO
+    # -----------------------------------------
+
+    elif prize_type == "Plinko":
+
+        # Wild Points Plinko
+        if wild_points and wild_points > 0:
+
+            plinko_wild_points = wild_points
+
+        # Cash Prize Plinko
+        elif prize_value:
+
+            plinko_prize = prize_value
+            total_prize_value = prize_value
+
+    # -----------------------------------------
+    # UPDATE MONTHLY TOTAL
+    # -----------------------------------------
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        await db.execute(
+            """
+            INSERT INTO prize_monthly_totals (
+                year,
+                month,
+                free_spins,
+                twitter_giveaway,
+                guess_balance,
+                tournament,
+                plinko_prize,
+                plinko_wild_points,
+                total_prize_value
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+
+            ON CONFLICT(year, month)
+            DO UPDATE SET
+
+                free_spins =
+                    free_spins + excluded.free_spins,
+
+                twitter_giveaway =
+                    twitter_giveaway + excluded.twitter_giveaway,
+
+                guess_balance =
+                    guess_balance + excluded.guess_balance,
+
+                tournament =
+                    tournament + excluded.tournament,
+
+                plinko_prize =
+                    plinko_prize + excluded.plinko_prize,
+
+                plinko_wild_points =
+                    plinko_wild_points + excluded.plinko_wild_points,
+
+                total_prize_value =
+                    total_prize_value + excluded.total_prize_value
+            """,
+            (
+                year,
+                month,
+                free_spins,
+                twitter_giveaway,
+                guess_balance,
+                tournament,
+                plinko_prize,
+                plinko_wild_points,
+                total_prize_value
+            )
+        )
+
+        await db.commit()
 
 
 if __name__ == "__main__":
