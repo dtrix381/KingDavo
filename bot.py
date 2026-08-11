@@ -5327,6 +5327,24 @@ class StreamPrizeView(discord.ui.View):
             ephemeral=True
         )
         
+    
+    @discord.ui.button(
+        label="Top Chatter",
+        emoji="💬",
+        style=discord.ButtonStyle.primary,
+        custom_id="stream_prize_top_chatter"
+    )
+    async def top_chatter(
+            self,
+            interaction: discord.Interaction,
+            button: discord.ui.Button
+    ):
+        await interaction.response.send_message(
+            "💬 **Top Chatter**\n\nSelect the winner below.",
+            view=PrizeMemberSelectView("Top Chatter"),
+            ephemeral=True
+        )
+        
     @discord.ui.button(
         label="Twitter Giveaway",
         emoji="🐦",
@@ -5498,6 +5516,12 @@ class PrizeMemberSelectView(discord.ui.View):
                 RaffleModal(member.id)
             )
 
+        elif self.prize_type == "Top Chatter":
+
+            await interaction.response.send_modal(
+                TopChatterModal(member.id)
+            )
+            
         elif self.prize_type == "Twitter Giveaway":
 
             await interaction.response.send_modal(
@@ -5724,6 +5748,77 @@ class RaffleModal(
             "winner_mention": member.mention,
 
             "prize_type": "Raffle",
+
+            "slot_name": None,
+            "quantity": None,
+            "bet_size": None,
+
+            "prize_value": prize_value,
+            "wild_points": None,
+
+            "kick_link": None
+        }
+
+        await show_prize_confirmation(
+            interaction,
+            prize_data
+        )
+        
+class TopChatterModal(
+    discord.ui.Modal,
+    title="💬 Top Chatter"
+):
+
+    prize = discord.ui.TextInput(
+        label="Prize",
+        placeholder="Example: $50",
+        required=True,
+        max_length=100
+    )
+
+    def __init__(self, winner_id: int):
+        super().__init__()
+
+        self.winner_id = winner_id
+
+    async def on_submit(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        member = interaction.guild.get_member(
+            self.winner_id
+        )
+
+        if member is None:
+
+            await interaction.response.send_message(
+                "❌ That member is no longer in the server.",
+                ephemeral=True
+            )
+
+            return
+
+        prize_value = parse_money(
+            self.prize.value
+        )
+
+        if prize_value is None:
+
+            await interaction.response.send_message(
+                "❌ Invalid prize amount.\n"
+                "Example: `$50`",
+                ephemeral=True
+            )
+
+            return
+
+        prize_data = {
+            "winner_id": member.id,
+            "winner_name": member.display_name,
+            "winner_mention": member.mention,
+
+            "prize_type": "Top Chatter",
 
             "slot_name": None,
             "quantity": None,
@@ -6205,8 +6300,20 @@ async def stream_prizes(
     )
 
     embed.add_field(
+        name="🎟️ Raffle",
+        value="Record a raffle prize.",
+        inline=False
+    )
+
+    embed.add_field(
         name="🐦 Twitter Giveaway",
         value="Record a Twitter giveaway prize.",
+        inline=False
+    )
+
+    embed.add_field(
+        name="💬 Top Chatter",
+        value="Record a Top Chatter prize.",
         inline=False
     )
 
@@ -7294,7 +7401,7 @@ async def record_prize_totals(
     month = now.month
 
     # -----------------------------------------
-    # VALUES
+    # PRIZE VALUES
     # -----------------------------------------
 
     free_spins = 0.0
@@ -7302,6 +7409,7 @@ async def record_prize_totals(
     guess_balance = 0.0
     tournament = 0.0
     raffle = 0.0
+    top_chatter = 0.0
     plinko_prize = 0.0
     plinko_wild_points = 0
     total_prize_value = 0.0
@@ -7319,7 +7427,7 @@ async def record_prize_totals(
         total_prize_value = free_spins
 
     # -----------------------------------------
-    # TWITTER
+    # TWITTER GIVEAWAY
     # -----------------------------------------
 
     elif prize_type == "Twitter Giveaway":
@@ -7328,7 +7436,7 @@ async def record_prize_totals(
         total_prize_value = prize_value
 
     # -----------------------------------------
-    # GUESS BALANCE
+    # GUESS THE BALANCE
     # -----------------------------------------
 
     elif prize_type == "Guess the Balance":
@@ -7352,6 +7460,15 @@ async def record_prize_totals(
     elif prize_type == "Raffle":
 
         raffle = prize_value
+        total_prize_value = prize_value
+
+    # -----------------------------------------
+    # TOP CHATTER
+    # -----------------------------------------
+
+    elif prize_type == "Top Chatter":
+
+        top_chatter = prize_value
         total_prize_value = prize_value
 
     # -----------------------------------------
@@ -7389,11 +7506,12 @@ async def record_prize_totals(
                 guess_balance,
                 tournament,
                 raffle,
+                top_chatter,
                 plinko_prize,
                 plinko_wild_points,
                 total_prize_value
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 
             ON CONFLICT(year, month)
             DO UPDATE SET
@@ -7413,6 +7531,9 @@ async def record_prize_totals(
                 raffle =
                     raffle + excluded.raffle,
 
+                top_chatter =
+                    top_chatter + excluded.top_chatter,
+
                 plinko_prize =
                     plinko_prize + excluded.plinko_prize,
 
@@ -7430,6 +7551,7 @@ async def record_prize_totals(
                 guess_balance,
                 tournament,
                 raffle,
+                top_chatter,
                 plinko_prize,
                 plinko_wild_points,
                 total_prize_value
@@ -7450,12 +7572,13 @@ async def record_prize_totals(
                 guess_balance,
                 tournament,
                 raffle,
+                top_chatter,
                 plinko_prize,
                 plinko_wild_points,
                 total_prize_value,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 
             ON CONFLICT(winner_id)
             DO UPDATE SET
@@ -7478,6 +7601,9 @@ async def record_prize_totals(
                 raffle =
                     raffle + excluded.raffle,
 
+                top_chatter =
+                    top_chatter + excluded.top_chatter,
+
                 plinko_prize =
                     plinko_prize + excluded.plinko_prize,
 
@@ -7498,6 +7624,7 @@ async def record_prize_totals(
                 guess_balance,
                 tournament,
                 raffle,
+                top_chatter,
                 plinko_prize,
                 plinko_wild_points,
                 total_prize_value,
