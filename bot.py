@@ -8086,6 +8086,30 @@ class KickUsernameConfirmationView(
             view=self
         )
 
+class KickLinkView(
+    discord.ui.View
+):
+
+    def __init__(self):
+
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Link Kick Username",
+        emoji="🎥",
+        style=discord.ButtonStyle.success,
+        custom_id="kick_link_username"
+    )
+    async def link_kick_username(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        await interaction.response.send_modal(
+            KickUsernameModal()
+        )
+        
 @bot.tree.command(
     name="setup_kick_verification",
     description="Create the Kick verification panel."
