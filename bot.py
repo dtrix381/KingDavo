@@ -75,6 +75,8 @@ manual_games = {}  # Stores {channel_id: (players, provider_name)}
 PRIZE_APPROVAL_CHANNEL_ID = 1536611050722426930
 PRIZE_LOG_CHANNEL_ID = 1536535520946032744
 PRIZE_APPROVER_ID = 1376017792209387520
+KICK_LINK_CHANNEL_ID = 1179352191312601148
+KICK_VERIFIED_ROLE_ID = 1536640254281515078
 
 EXCLUDED_LEADERBOARD_USERS = {
     878253813553844254,
@@ -146,6 +148,7 @@ async def on_ready():
     bot.add_view(RegionRoleView())
     bot.add_view(StreamPrizeView())
     bot.add_view(PrizeApprovalView())
+    bot.add_view(KickLinkView())
 
     streamers = await load_streamers()
 
@@ -7638,6 +7641,520 @@ async def record_prize_totals(
         )
 
         await db.commit()
+
+
+class KickUsernameModal(
+    discord.ui.Modal,
+    title="🎥 Link Kick Username"
+):
+
+    kick_username = discord.ui.TextInput(
+        label="Kick Username",
+        placeholder="Enter your Kick username",
+        required=True,
+        min_length=1,
+        max_length=100
+    )
+
+    async def on_submit(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        kick_username = self.kick_username.value.strip()
+
+        # Remove @ if they accidentally enter it
+        kick_username = kick_username.lstrip("@").strip()
+
+        if not kick_username:
+
+            await interaction.response.send_message(
+                "❌ Please enter your Kick username.",
+                ephemeral=True
+            )
+
+            return
+
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                title="🔗 Confirm Kick Verification",
+                description=(
+                    "Please check your Kick username before confirming.\n\n"
+                    f"🎥 **Kick Username:** `{kick_username}`\n"
+                    f"🏷️ **Discord Nickname:** `{kick_username}`\n\n"
+                    "By confirming, your Discord nickname will be changed "
+                    "to your Kick username and you will receive the "
+                    "**Kick Verified** role.\n\n"
+                    "⚠️ **Important:** You must be Kick Verified to be "
+                    "eligible for stream prizes."
+                ),
+                color=discord.Color.gold()
+            ),
+            view=KickUsernameConfirmationView(
+                kick_username
+            ),
+            ephemeral=True
+        )
+
+class KickUsernameConfirmationView(
+    discord.ui.View
+):
+
+    def __init__(
+        self,
+        kick_username: str
+    ):
+
+        super().__init__(timeout=300)
+
+        self.kick_username = kick_username
+
+    @discord.ui.button(
+        label="Confirm",
+        emoji="✅",
+        style=discord.ButtonStyle.success
+    )
+    async def confirm(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        member = interaction.guild.get_member(
+            interaction.user.id
+        )
+
+        if member is None:
+
+            await interaction.response.send_message(
+                "❌ Could not find you in the server.",
+                ephemeral=True
+            )
+
+            return
+
+        # -----------------------------------------
+        # GET KICK VERIFIED ROLE
+        # -----------------------------------------
+
+        role = interaction.guild.get_role(
+            KICK_VERIFIED_ROLE_ID
+        )
+
+        if role is None:
+
+            await interaction.response.send_message(
+                "❌ The **Kick Verified** role could not be found.",
+                ephemeral=True
+            )
+
+            return
+
+        # -----------------------------------------
+        # CHECK NICKNAME PERMISSION
+        # -----------------------------------------
+
+        me = interaction.guild.me
+
+        if not me.guild_permissions.manage_nicknames:
+
+            await interaction.response.send_message(
+                "❌ I don't have permission to manage nicknames.",
+                ephemeral=True
+            )
+
+            return
+
+        # -----------------------------------------
+        # CHECK ROLE HIERARCHY
+        # -----------------------------------------
+
+        if role >= me.top_role:
+
+            await interaction.response.send_message(
+                "❌ I cannot give you the **Kick Verified** role "
+                "because that role is higher than or equal to "
+                "my bot role.",
+                ephemeral=True
+            )
+
+            return
+
+        # -----------------------------------------
+        # CHANGE NICKNAME
+        # -----------------------------------------
+
+        try:
+
+            await member.edit(
+                nick=self.kick_username,
+                reason="Kick username verification"
+            )
+
+        except discord.Forbidden:
+
+            await interaction.response.send_message(
+                "❌ I cannot change your nickname.\n\n"
+                "Please make sure my bot role is above your role.",
+                ephemeral=True
+            )
+
+            return
+
+        except discord.HTTPException:
+
+            await interaction.response.send_message(
+                "❌ Discord rejected the nickname change. "
+                "Please try again.",
+                ephemeral=True
+            )
+
+            return
+
+        # -----------------------------------------
+        # GIVE KICK VERIFIED ROLE
+        # -----------------------------------------
+
+        try:
+
+            if role not in member.roles:
+
+                await member.add_roles(
+                    role,
+                    reason="Kick username verification"
+                )
+
+        except discord.Forbidden:
+
+            await interaction.response.send_message(
+                "⚠️ Your nickname was changed, but I couldn't "
+                "give you the **Kick Verified** role.",
+                ephemeral=True
+            )
+
+            return
+
+        # -----------------------------------------
+        # SUCCESS
+        # -----------------------------------------
+
+        for item in self.children:
+            item.disabled = True
+
+        embed = discord.Embed(
+            title="✅ Kick Verified",
+            description=(
+                f"🎥 **Kick Username:** `{self.kick_username}`\n\n"
+                f"🏷️ Your Discord nickname is now "
+                f"`{self.kick_username}`.\n\n"
+                "🎉 You have received the **Kick Verified** role!\n\n"
+                "🏆 You are now eligible to receive "
+                "**stream prizes**."
+            ),
+            color=discord.Color.green()
+        )
+
+        await interaction.response.edit_message(
+            embed=embed,
+            view=self
+        )
+
+    # -----------------------------------------
+    # CANCEL
+    # -----------------------------------------
+
+    @discord.ui.button(
+        label="Cancel",
+        emoji="❌",
+        style=discord.ButtonStyle.danger
+    )
+    async def cancel(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        for item in self.children:
+            item.disabled = True
+
+        embed = discord.Embed(
+            title="❌ Verification Cancelled",
+            description=(
+                "Your Kick verification was cancelled.\n\n"
+                "Nothing has been changed."
+            ),
+            color=discord.Color.red()
+        )
+
+        await interaction.response.edit_message(
+            embed=embed,
+            view=self
+        )
+
+class KickUsernameConfirmationView(
+    discord.ui.View
+):
+
+    def __init__(
+        self,
+        kick_username: str
+    ):
+
+        super().__init__(timeout=300)
+
+        self.kick_username = kick_username
+
+    @discord.ui.button(
+        label="Confirm",
+        emoji="✅",
+        style=discord.ButtonStyle.success
+    )
+    async def confirm(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        member = interaction.guild.get_member(
+            interaction.user.id
+        )
+
+        if member is None:
+
+            await interaction.response.send_message(
+                "❌ Could not find you in the server.",
+                ephemeral=True
+            )
+
+            return
+
+        # -----------------------------------------
+        # GET KICK VERIFIED ROLE
+        # -----------------------------------------
+
+        role = interaction.guild.get_role(
+            KICK_VERIFIED_ROLE_ID
+        )
+
+        if role is None:
+
+            await interaction.response.send_message(
+                "❌ The **Kick Verified** role could not be found.",
+                ephemeral=True
+            )
+
+            return
+
+        # -----------------------------------------
+        # CHECK NICKNAME PERMISSION
+        # -----------------------------------------
+
+        me = interaction.guild.me
+
+        if not me.guild_permissions.manage_nicknames:
+
+            await interaction.response.send_message(
+                "❌ I don't have permission to manage nicknames.",
+                ephemeral=True
+            )
+
+            return
+
+        # -----------------------------------------
+        # CHECK ROLE HIERARCHY
+        # -----------------------------------------
+
+        if role >= me.top_role:
+
+            await interaction.response.send_message(
+                "❌ I cannot give you the **Kick Verified** role "
+                "because that role is higher than or equal to "
+                "my bot role.",
+                ephemeral=True
+            )
+
+            return
+
+        # -----------------------------------------
+        # CHANGE NICKNAME
+        # -----------------------------------------
+
+        try:
+
+            await member.edit(
+                nick=self.kick_username,
+                reason="Kick username verification"
+            )
+
+        except discord.Forbidden:
+
+            await interaction.response.send_message(
+                "❌ I cannot change your nickname.\n\n"
+                "Please make sure my bot role is above your role.",
+                ephemeral=True
+            )
+
+            return
+
+        except discord.HTTPException:
+
+            await interaction.response.send_message(
+                "❌ Discord rejected the nickname change. "
+                "Please try again.",
+                ephemeral=True
+            )
+
+            return
+
+        # -----------------------------------------
+        # GIVE KICK VERIFIED ROLE
+        # -----------------------------------------
+
+        try:
+
+            if role not in member.roles:
+
+                await member.add_roles(
+                    role,
+                    reason="Kick username verification"
+                )
+
+        except discord.Forbidden:
+
+            await interaction.response.send_message(
+                "⚠️ Your nickname was changed, but I couldn't "
+                "give you the **Kick Verified** role.",
+                ephemeral=True
+            )
+
+            return
+
+        # -----------------------------------------
+        # SUCCESS
+        # -----------------------------------------
+
+        for item in self.children:
+            item.disabled = True
+
+        embed = discord.Embed(
+            title="✅ Kick Verified",
+            description=(
+                f"🎥 **Kick Username:** `{self.kick_username}`\n\n"
+                f"🏷️ Your Discord nickname is now "
+                f"`{self.kick_username}`.\n\n"
+                "🎉 You have received the **Kick Verified** role!\n\n"
+                "🏆 You are now eligible to receive "
+                "**stream prizes**."
+            ),
+            color=discord.Color.green()
+        )
+
+        await interaction.response.edit_message(
+            embed=embed,
+            view=self
+        )
+
+    # -----------------------------------------
+    # CANCEL
+    # -----------------------------------------
+
+    @discord.ui.button(
+        label="Cancel",
+        emoji="❌",
+        style=discord.ButtonStyle.danger
+    )
+    async def cancel(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        for item in self.children:
+            item.disabled = True
+
+        embed = discord.Embed(
+            title="❌ Verification Cancelled",
+            description=(
+                "Your Kick verification was cancelled.\n\n"
+                "Nothing has been changed."
+            ),
+            color=discord.Color.red()
+        )
+
+        await interaction.response.edit_message(
+            embed=embed,
+            view=self
+        )
+
+@bot.tree.command(
+    name="setup_kick_verification",
+    description="Create the Kick verification panel."
+)
+async def setup_kick_verification(
+    interaction: discord.Interaction
+):
+
+    if interaction.user.id != DTRIX_ID:
+
+        await interaction.response.send_message(
+            "❌ You are not authorized to use this command.",
+            ephemeral=True
+        )
+
+        return
+
+    channel = interaction.guild.get_channel(
+        KICK_LINK_CHANNEL_ID
+    )
+
+    if channel is None:
+
+        await interaction.response.send_message(
+            "❌ Kick verification channel could not be found.",
+            ephemeral=True
+        )
+
+        return
+
+    embed = discord.Embed(
+        title="🎥 Kick Verification",
+        description=(
+            "Want to be eligible for **WildLines stream prizes**?\n\n"
+
+            "Before you can receive any stream prizes, "
+            "you **must link and verify your Kick username** "
+            "with the server.\n\n"
+
+            "### 🔗 How to Verify\n"
+            "Click the **🎥 Link Kick Username** button below "
+            "and enter your Kick username.\n\n"
+
+            "Your Discord nickname will be changed to your "
+            "Kick username and you will receive the "
+            "**Kick Verified** role.\n\n"
+
+            "### 🏆 Stream Prize Eligibility\n"
+            "⚠️ **Kick Verified members only.**\n\n"
+            "You must have the **Kick Verified** role when "
+            "you win a stream prize to be eligible to receive it."
+        ),
+        color=discord.Color.green()
+    )
+
+    embed.set_footer(
+        text="Verify your Kick account before participating in stream prizes."
+    )
+
+    await channel.send(
+        embed=embed,
+        view=KickLinkView()
+    )
+
+    await interaction.response.send_message(
+        "✅ Kick verification panel created successfully!",
+        ephemeral=True
+    )
+
 
 if __name__ == "__main__":
     bot.run(TOKEN)
