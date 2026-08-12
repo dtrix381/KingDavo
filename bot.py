@@ -8676,10 +8676,14 @@ async def timestamps(
     # -----------------------------------------
 
     embed.add_field(
-        name="🕒 Time",
-        value=(
-            f"<t:{int(submitted_datetime.timestamp())}:F>"
-        ),
+        name="📅 Date",
+        value=now.strftime("%A, %B %d, %Y"),
+        inline=False
+    )
+
+    embed.add_field(
+        name="⏱️ Stream Time",
+        value=f"`{time_input}`",
         inline=False
     )
 
