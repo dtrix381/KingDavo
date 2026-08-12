@@ -6417,7 +6417,10 @@ async def show_prize_confirmation(
     )
 
     # Free Spins
-    if prize_data["prize_type"] == "Free Spins":
+    if prize_data["prize_type"] in (
+            "Free Spins",
+            "Plinko - Free Spins"
+    ):
 
         embed.add_field(
             name="🎰 Slot",
@@ -6574,11 +6577,11 @@ async def create_pending_prize(
         inline=True
     )
 
-    # -----------------------------------------
-    # FREE SPINS
-    # -----------------------------------------
-
-    if prize_data["prize_type"] == "Free Spins":
+    # Free Spins
+    if prize_data["prize_type"] in (
+            "Free Spins",
+            "Plinko - Free Spins"
+    ):
 
         embed.add_field(
             name="🎰 Slot",
