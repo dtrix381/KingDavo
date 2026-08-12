@@ -8653,16 +8653,6 @@ async def timestamps(
     now = datetime.now(timezone.utc)
 
     # -----------------------------------------
-    # COMBINE CURRENT DATE WITH ENTERED TIME
-    # -----------------------------------------
-
-    submitted_datetime = datetime.combine(
-        now.date(),
-        parsed_time,
-        tzinfo=timezone.utc
-    )
-
-    # -----------------------------------------
     # EMBED
     # -----------------------------------------
 
@@ -8683,10 +8673,9 @@ async def timestamps(
 
     embed.add_field(
         name="⏱️ Stream Time",
-        value=f"`{time_input}`",
+        value=f"`{time}`",
         inline=False
     )
-
     # -----------------------------------------
     # SLOT
     # -----------------------------------------
