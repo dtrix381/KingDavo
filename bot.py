@@ -77,6 +77,7 @@ PRIZE_LOG_CHANNEL_ID = 1536535520946032744
 PRIZE_APPROVER_ID = 1376017792209387520
 KICK_LINK_CHANNEL_ID = 1179352191312601148
 KICK_VERIFIED_ROLE_ID = 1536640254281515078
+TIMESTAMPS_CHANNEL_ID = 1176520511879122986
 
 EXCLUDED_LEADERBOARD_USERS = {
     878253813553844254,
@@ -123,6 +124,8 @@ http_session = None
 GAMDOM_WS_URL = "wss://gamdom.com/socket.io/?EIO=3&transport=websocket"
 GAMDOM_BIG_WIN_CHANNEL_ID = 1536003420543000677  # CHANGE THIS
 GAMDOM_UNIT = 1500
+GAMDOM_GAMES_URL = "https://gamdom.com/client-api/casino/games-list"
+GAMDOM_GAMES_PER_PAGE = 100
 
 
 @bot.event
@@ -162,6 +165,13 @@ async def on_ready():
     if not check_stream.is_running():
         check_stream.start()
         print("▶️ Kick stream checker started")
+
+    if not gamdom_games_sync_task.is_running():
+        gamdom_games_sync_task.start()
+
+        print(
+            "🎰 Gamdom 24-hour game sync started"
+        )
 
     if not auto_scrape_slots.is_running():
         auto_scrape_slots.start()
@@ -8206,6 +8216,553 @@ async def setup_kick_verification(
     await interaction.response.send_message(
         "✅ Kick verification panel created successfully!",
         ephemeral=True
+    )
+
+
+async def sync_gamdom_games():
+
+    print("🎰 Starting Gamdom game catalog sync...")
+
+    try:
+
+        async with aiohttp.ClientSession(
+            headers={
+                "Accept": "*/*",
+                "Content-Type": "application/json",
+                "Origin": "https://gamdom.com",
+                "Referer": "https://gamdom.com/casino/slots"
+            }
+        ) as session:
+
+            page = 1
+            total_games = None
+            saved_games = 0
+
+            while True:
+
+                payload = {
+                    "config": [
+                        {
+                            "sectionType": "slots",
+                            "limit": GAMDOM_GAMES_PER_PAGE,
+                            "page": page
+                        }
+                    ]
+                }
+
+                print(
+                    f"🎰 Requesting Gamdom games page {page}..."
+                )
+
+                async with session.post(
+                    GAMDOM_GAMES_URL,
+                    json=payload
+                ) as response:
+
+                    if response.status != 200:
+
+                        print(
+                            f"❌ Gamdom games API returned "
+                            f"HTTP {response.status}"
+                        )
+
+                        text = await response.text()
+
+                        print(
+                            f"Response: {text[:500]}"
+                        )
+
+                        return
+
+                    data = await response.json()
+
+                games_data = data.get(
+                    "games",
+                    []
+                )
+
+                if not games_data:
+
+                    print(
+                        f"⚠️ No games data on page {page}."
+                    )
+
+                    break
+
+                if not isinstance(
+                    games_data,
+                    list
+                ):
+
+                    print(
+                        "❌ Unexpected Gamdom API response."
+                    )
+
+                    return
+
+                # -----------------------------------------
+                # TOTAL GAMES
+                # -----------------------------------------
+
+                if total_games is None:
+
+                    total_games = games_data[0].get(
+                        "totalCount",
+                        0
+                    )
+
+                    print(
+                        f"📦 Gamdom reports "
+                        f"{total_games} total games."
+                    )
+
+                games_list = games_data[0].get(
+                    "gamesList",
+                    []
+                )
+
+                if not games_list:
+
+                    print(
+                        f"⚠️ No games on page {page}."
+                    )
+
+                    break
+
+                # -----------------------------------------
+                # SAVE GAMES
+                # -----------------------------------------
+
+                now = datetime.now(
+                    timezone.utc
+                ).isoformat()
+
+                async with aiosqlite.connect(
+                    DB_PATH
+                ) as db:
+
+                    for game in games_list:
+
+                        static = game.get(
+                            "staticData",
+                            {}
+                        )
+
+                        if not isinstance(
+                            static,
+                            dict
+                        ):
+
+                            continue
+
+                        game_code = static.get(
+                            "game_code"
+                        )
+
+                        game_name = static.get(
+                            "name"
+                        )
+
+                        if not game_code or not game_name:
+
+                            continue
+
+                        provider = static.get(
+                            "provider_name"
+                        )
+
+                        slug = static.get(
+                            "slug"
+                        )
+
+                        thumbnail_url = static.get(
+                            "url_thumb"
+                        )
+
+                        background_url = static.get(
+                            "url_background"
+                        )
+
+                        enabled = 1 if (
+                            static.get(
+                                "enabled",
+                                True
+                            )
+                            and
+                            static.get(
+                                "gamdom_enabled",
+                                True
+                            )
+                        ) else 0
+
+                        await db.execute(
+                            """
+                            INSERT INTO gamdom_games (
+                                game_code,
+                                game_name,
+                                provider,
+                                slug,
+                                thumbnail_url,
+                                background_url,
+                                enabled,
+                                last_seen_at
+                            )
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+
+                            ON CONFLICT(game_code)
+                            DO UPDATE SET
+                                game_name = excluded.game_name,
+                                provider = excluded.provider,
+                                slug = excluded.slug,
+                                thumbnail_url = excluded.thumbnail_url,
+                                background_url = excluded.background_url,
+                                enabled = excluded.enabled,
+                                last_seen_at = excluded.last_seen_at
+                            """,
+                            (
+                                game_code,
+                                game_name,
+                                provider,
+                                slug,
+                                thumbnail_url,
+                                background_url,
+                                enabled,
+                                now
+                            )
+                        )
+
+                        saved_games += 1
+
+                    await db.commit()
+
+                print(
+                    f"✅ Page {page}: "
+                    f"{len(games_list)} games processed."
+                )
+
+                # -----------------------------------------
+                # CHECK IF FINISHED
+                # -----------------------------------------
+
+                if (
+                    total_games
+                    and saved_games >= total_games
+                ):
+
+                    break
+
+                if len(games_list) < GAMDOM_GAMES_PER_PAGE:
+
+                    break
+
+                page += 1
+
+                # -----------------------------------------
+                # SMALL DELAY
+                # -----------------------------------------
+
+                await asyncio.sleep(0.25)
+
+        print(
+            f"✅ Gamdom catalog sync complete. "
+            f"{saved_games} games processed."
+        )
+
+    except Exception as e:
+
+        print(
+            f"❌ Gamdom catalog sync failed: {e}"
+        )
+
+@tasks.loop(hours=24)
+async def gamdom_games_sync_task():
+
+    await sync_gamdom_games()
+
+
+@gamdom_games_sync_task.before_loop
+async def before_gamdom_games_sync():
+
+    await bot.wait_until_ready()
+
+
+async def timestamps_slot_autocomplete(
+    interaction: discord.Interaction,
+    current: str
+):
+
+    current = current.strip()
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        if current:
+
+            cursor = await db.execute(
+                """
+                SELECT game_name
+                FROM gamdom_games
+                WHERE enabled = 1
+                  AND game_name LIKE ?
+                ORDER BY game_name COLLATE NOCASE
+                LIMIT 25
+                """,
+                (f"%{current}%",)
+            )
+
+        else:
+
+            cursor = await db.execute(
+                """
+                SELECT game_name
+                FROM gamdom_games
+                WHERE enabled = 1
+                ORDER BY game_name COLLATE NOCASE
+                LIMIT 25
+                """
+            )
+
+        rows = await cursor.fetchall()
+
+    return [
+        app_commands.Choice(
+            name=row[0][:100],
+            value=row[0][:100]
+        )
+        for row in rows
+    ]
+
+
+@bot.tree.command(
+    name="timestamps",
+    description="Submit a Gamdom win timestamp."
+)
+@app_commands.describe(
+    time="Time of the win (HH:MM:SS)",
+    slot="Slot/game name",
+    bet_size="Bet size",
+    payout="Payout"
+)
+@app_commands.autocomplete(
+    slot=timestamps_slot_autocomplete
+)
+async def timestamps(
+    interaction: discord.Interaction,
+    time: str,
+    slot: str,
+    bet_size: float,
+    payout: float
+):
+
+    # -----------------------------------------
+    # CHANNEL CHECK
+    # -----------------------------------------
+
+    if interaction.channel_id != TIMESTAMPS_CHANNEL_ID:
+
+        await interaction.response.send_message(
+            "❌ You can't run that command here.\n\n"
+            "This command can only be run in the "
+            "dedicated timestamps channel.",
+            ephemeral=True
+        )
+
+        return
+
+    # -----------------------------------------
+    # VALIDATE TIME
+    # -----------------------------------------
+
+    try:
+
+        parsed_time = datetime.strptime(
+            time,
+            "%H:%M:%S"
+        ).time()
+
+    except ValueError:
+
+        await interaction.response.send_message(
+            "❌ Invalid time format.\n\n"
+            "Please use:\n"
+            "`00:00:00`",
+            ephemeral=True
+        )
+
+        return
+
+    # -----------------------------------------
+    # VALIDATE BET
+    # -----------------------------------------
+
+    if bet_size <= 0:
+
+        await interaction.response.send_message(
+            "❌ Bet size must be greater than 0.",
+            ephemeral=True
+        )
+
+        return
+
+    # -----------------------------------------
+    # VALIDATE PAYOUT
+    # -----------------------------------------
+
+    if payout < 0:
+
+        await interaction.response.send_message(
+            "❌ Payout cannot be negative.",
+            ephemeral=True
+        )
+
+        return
+
+    # -----------------------------------------
+    # CALCULATE MULTIPLIER
+    # -----------------------------------------
+
+    multiplier = payout / bet_size
+
+    # -----------------------------------------
+    # FIND GAME IN GAMDOM DATABASE
+    # -----------------------------------------
+
+    game = None
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        cursor = await db.execute(
+            """
+            SELECT
+                game_name,
+                provider,
+                thumbnail_url
+            FROM gamdom_games
+            WHERE LOWER(game_name) = LOWER(?)
+              AND enabled = 1
+            LIMIT 1
+            """,
+            (slot,)
+        )
+
+        game = await cursor.fetchone()
+
+    # -----------------------------------------
+    # CURRENT DATE
+    # -----------------------------------------
+
+    now = datetime.now(timezone.utc)
+
+    # -----------------------------------------
+    # COMBINE CURRENT DATE WITH ENTERED TIME
+    # -----------------------------------------
+
+    submitted_datetime = datetime.combine(
+        now.date(),
+        parsed_time,
+        tzinfo=timezone.utc
+    )
+
+    # -----------------------------------------
+    # EMBED
+    # -----------------------------------------
+
+    embed = discord.Embed(
+        title="Big Win Timestamp",
+        color=discord.Color.gold()
+    )
+
+    # -----------------------------------------
+    # TIME
+    # -----------------------------------------
+
+    embed.add_field(
+        name="🕒 Time",
+        value=(
+            f"<t:{int(submitted_datetime.timestamp())}:F>"
+        ),
+        inline=False
+    )
+
+    # -----------------------------------------
+    # SLOT
+    # -----------------------------------------
+
+    embed.add_field(
+        name="🎰 Slot",
+        value=slot,
+        inline=True
+    )
+
+    # -----------------------------------------
+    # BET
+    # -----------------------------------------
+
+    embed.add_field(
+        name="🎲 Bet Size",
+        value=f"${bet_size:,.2f}",
+        inline=True
+    )
+
+    # -----------------------------------------
+    # PAYOUT
+    # -----------------------------------------
+
+    embed.add_field(
+        name="💰 Payout",
+        value=f"${payout:,.2f}",
+        inline=True
+    )
+
+    # -----------------------------------------
+    # TOTAL X
+    # -----------------------------------------
+
+    embed.add_field(
+        name="🔥 Total X",
+        value=f"**{multiplier:,.2f}x**",
+        inline=False
+    )
+
+    # -----------------------------------------
+    # FOOTER
+    # -----------------------------------------
+
+    embed.set_footer(
+        text=f"Submitted By: {interaction.user.display_name}"
+    )
+
+    # -----------------------------------------
+    # GAMDOM THUMBNAIL
+    # -----------------------------------------
+
+    if game:
+
+        game_name = game[0]
+        provider = game[1]
+        thumbnail_url = game[2]
+
+        if thumbnail_url:
+
+            thumbnail_url = str(
+                thumbnail_url
+            ).strip()
+
+            if (
+                thumbnail_url.startswith("http://")
+                or
+                thumbnail_url.startswith("https://")
+            ):
+
+                embed.set_thumbnail(
+                    url=thumbnail_url
+                )
+
+    # -----------------------------------------
+    # SEND EMBED
+    # -----------------------------------------
+
+    await interaction.response.send_message(
+        embed=embed
     )
 
 
