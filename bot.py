@@ -5525,7 +5525,7 @@ class PrizeMemberSelectView(discord.ui.View):
 
             await interaction.response.send_modal(
                 FreeSpinsModal(
-                    self.selected_member_id,
+                    member.id,
                     self.prize_type
                 )
             )
