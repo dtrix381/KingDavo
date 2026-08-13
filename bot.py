@@ -79,6 +79,13 @@ KICK_LINK_CHANNEL_ID = 1179352191312601148
 KICK_VERIFIED_ROLE_ID = 1536640254281515078
 TIMESTAMPS_CHANNEL_ID = 1176520511879122986
 
+JESS_ID = 1356108518289313894
+TREASURE_HUNT_CHANNEL_ID = 1534410165909065899
+TREASURE_HUNT_SUBMISSION_CHANNEL_ID = 1537240074737950821
+TREASURE_HUNT_ROLE_ID = 1534149017464868935
+TREASURE_HUNT_PRIZE = "$100 CAD"
+treasure_pending_submissions = {}
+
 EXCLUDED_LEADERBOARD_USERS = {
     878253813553844254,
     850665803161534484,
@@ -152,6 +159,8 @@ async def on_ready():
     bot.add_view(StreamPrizeView())
     bot.add_view(PrizeApprovalView())
     bot.add_view(KickLinkView())
+    bot.add_view(TreasureHuntControlView())
+    bot.add_view(TreasureHuntSubmissionView())
 
     streamers = await load_streamers()
 
@@ -8759,6 +8768,1490 @@ async def timestamps(
 
     await interaction.response.send_message(
         embed=embed
+    )
+
+# ============================================================
+# TREASURE HUNT HELPERS
+# ============================================================
+
+def is_treasure_hunt_controller(user_id: int) -> bool:
+
+    return user_id in (
+        DTRIX_ID,
+        JESS_ID
+    )
+
+
+async def get_treasure_hunt():
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        cursor = await db.execute(
+            """
+            SELECT *
+            FROM treasure_hunt
+            WHERE id = 1
+            LIMIT 1
+            """
+        )
+
+        row = await cursor.fetchone()
+
+        await cursor.close()
+
+        return row
+
+
+async def reset_treasure_hunt():
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        # Delete ALL old submissions
+        await db.execute(
+            """
+            DELETE FROM treasure_hunt_submissions
+            """
+        )
+
+        # Delete old hunt
+        await db.execute(
+            """
+            DELETE FROM treasure_hunt
+            """
+        )
+
+        # Create fresh hunt
+        await db.execute(
+            """
+            INSERT INTO treasure_hunt (
+                id,
+                status,
+                channel_id,
+                announcement_message_id,
+                open_message_id,
+                submission_open,
+                answer_1,
+                answer_2,
+                answer_3,
+                answer_4,
+                answer_5,
+                winner_id,
+                created_at,
+                opened_at,
+                closed_at,
+                revealed_at,
+                winner_found_at
+            )
+            VALUES (
+                1,
+                'setup',
+                NULL,
+                NULL,
+                NULL,
+                0,
+                NULL,
+                NULL,
+                NULL,
+                NULL,
+                NULL,
+                NULL,
+                ?,
+                NULL,
+                NULL,
+                NULL,
+                NULL
+            )
+            """,
+            (now,)
+        )
+
+        await db.commit()
+
+
+async def update_treasure_hunt(**fields):
+
+    if not fields:
+        return
+
+    allowed = {
+        "status",
+        "channel_id",
+        "announcement_message_id",
+        "open_message_id",
+        "submission_open",
+        "answer_1",
+        "answer_2",
+        "answer_3",
+        "answer_4",
+        "answer_5",
+        "winner_id",
+        "opened_at",
+        "closed_at",
+        "revealed_at",
+        "winner_found_at"
+    }
+
+    fields = {
+        key: value
+        for key, value in fields.items()
+        if key in allowed
+    }
+
+    if not fields:
+        return
+
+    assignments = ", ".join(
+        f"{key} = ?"
+        for key in fields
+    )
+
+    values = list(fields.values())
+
+    values.append(1)
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        await db.execute(
+            f"""
+            UPDATE treasure_hunt
+            SET {assignments}
+            WHERE id = ?
+            """,
+            values
+        )
+
+        await db.commit()
+
+def create_treasure_hunt_embed():
+
+    embed = discord.Embed(
+        title="🏴‍☠️ TREASURE HUNT",
+        description=(
+            "Collect the **5 Treasure Slots** from clues throughout "
+            "the stream to win **$100 CAD** tipped to your Gamdom account."
+        ),
+        color=discord.Color.gold()
+    )
+
+    embed.add_field(
+        name="💰 Prize",
+        value=(
+            "**$100 CAD** tipped to your Gamdom account."
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="📋 Requirements",
+        value=(
+            "Must be under code and be an active depositor.\n"
+            "Minimum **$50 USD deposited in the last 7 days**."
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="🔎 How It Works",
+        value=(
+            "Collect all **5 Treasure Slots** from clues throughout "
+            "the stream.\n\n"
+            "At the end of the stream, the Treasure Hunt channel "
+            "will be unlocked for you to submit your answers.\n\n"
+            "The **first submission with all 5 correct treasures wins!**"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="⚠️ Answer Rules",
+        value=(
+            "Answers must include the **slot name AND provider**.\n\n"
+            "All 5 answers must be submitted together in one submission.\n\n"
+            "You must also provide your **Gamdom ID**."
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="📝 Submission Format",
+        value=(
+            "```"
+            "Treasure Hunt\n"
+            "1-\n"
+            "2-\n"
+            "3-\n"
+            "4-\n"
+            "5-\n"
+            "ID:"
+            "```"
+        ),
+        inline=False
+    )
+
+    embed.set_footer(
+        text="WildLines Treasure Hunt"
+    )
+
+    return embed
+
+class TreasureHuntControlView(
+    discord.ui.View
+):
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    # ========================================================
+    # OPEN
+    # ========================================================
+
+    @discord.ui.button(
+        label="OPEN TREASURE HUNT",
+        emoji="🔓",
+        style=discord.ButtonStyle.success,
+        custom_id="treasure_open"
+    )
+    async def open_hunt(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        if not is_treasure_hunt_controller(
+            interaction.user.id
+        ):
+            await interaction.response.send_message(
+                "❌ You are not authorized to control the Treasure Hunt.",
+                ephemeral=True
+            )
+            return
+
+        if interaction.channel_id != TREASURE_HUNT_CHANNEL_ID:
+            await interaction.response.send_message(
+                "❌ This button can only be used in the Treasure Hunt channel.",
+                ephemeral=True
+            )
+            return
+
+        hunt = await get_treasure_hunt()
+
+        if hunt is None:
+            await interaction.response.send_message(
+                "❌ No Treasure Hunt is currently set up.",
+                ephemeral=True
+            )
+            return
+
+        # Status is index 1
+        status = hunt[1]
+
+        if status == "open":
+            await interaction.response.send_message(
+                "⚠️ The Treasure Hunt is already open.",
+                ephemeral=True
+            )
+            return
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        # -----------------------------------------
+        # HIDE SUBMISSION CHANNEL
+        # -----------------------------------------
+
+        submission_channel = interaction.guild.get_channel(
+            TREASURE_HUNT_SUBMISSION_CHANNEL_ID
+        )
+
+        if submission_channel:
+
+            everyone = interaction.guild.default_role
+
+            try:
+
+                # Hide from @everyone
+                await submission_channel.set_permissions(
+                    everyone,
+                    view_channel=False
+                )
+
+                # IMPORTANT:
+                # Explicitly hide it from the Treasure Hunt role too.
+                treasure_role = interaction.guild.get_role(
+                    TREASURE_HUNT_ROLE_ID
+                )
+
+                if treasure_role:
+                    await submission_channel.set_permissions(
+                        treasure_role,
+                        view_channel=False
+                    )
+
+            except discord.Forbidden:
+
+                await interaction.response.send_message(
+                    "❌ I don't have permission to hide the submission channel.",
+                    ephemeral=True
+                )
+
+                return
+
+        # -----------------------------------------
+        # UPDATE DATABASE
+        # -----------------------------------------
+
+        await update_treasure_hunt(
+            status="open",
+            channel_id=interaction.channel_id,
+            submission_open=1,
+            opened_at=now
+        )
+
+        # -----------------------------------------
+        # MENTION ROLE
+        # -----------------------------------------
+
+        role = interaction.guild.get_role(
+            TREASURE_HUNT_ROLE_ID
+        )
+
+        if role:
+
+            await interaction.channel.send(
+                role.mention
+            )
+
+        # -----------------------------------------
+        # OPEN EMBED
+        # -----------------------------------------
+
+        embed = discord.Embed(
+            title="🔓 TREASURE HUNT IS NOW OPEN!",
+            description=(
+                "The Treasure Hunt is officially open!\n\n"
+                "Collect all **5 correct Treasure Slots** "
+                "from the clues throughout the stream."
+            ),
+            color=discord.Color.green()
+        )
+
+        embed.add_field(
+            name="💰 Prize",
+            value="**$100 CAD** tipped to your Gamdom account.",
+            inline=False
+        )
+
+        embed.add_field(
+            name="📋 Requirements",
+            value=(
+                "Must be under code and be an active depositor.\n"
+                "Minimum **$50 USD deposited in the last 7 days**."
+            ),
+            inline=False
+        )
+
+        embed.add_field(
+            name="🏆 How To Win",
+            value=(
+                "The **first person** to submit all 5 correct "
+                "treasures wins the Hunt.\n\n"
+                "Each answer must contain the **slot name and provider**."
+            ),
+            inline=False
+        )
+
+        embed.add_field(
+            name="⚠️ Important",
+            value=(
+                "All 5 answers must be submitted together.\n"
+                "You must also provide your Gamdom ID.\n\n"
+                "Your submission will remain private until submissions close."
+            ),
+            inline=False
+        )
+
+        embed.set_footer(
+            text="Click the button below to submit your answers."
+        )
+
+        await interaction.channel.send(
+            embed=embed,
+            view=TreasureHuntSubmissionView()
+        )
+
+        await interaction.response.send_message(
+            "✅ Treasure Hunt is now open!",
+            ephemeral=True
+        )
+
+    # ========================================================
+    # CLOSE
+    # ========================================================
+
+    @discord.ui.button(
+        label="CLOSE SUBMISSIONS",
+        emoji="🔒",
+        style=discord.ButtonStyle.danger,
+        custom_id="treasure_close"
+    )
+    async def close_hunt(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        if not is_treasure_hunt_controller(
+            interaction.user.id
+        ):
+            await interaction.response.send_message(
+                "❌ You are not authorized to control the Treasure Hunt.",
+                ephemeral=True
+            )
+            return
+
+        if interaction.channel_id != TREASURE_HUNT_CHANNEL_ID:
+            await interaction.response.send_message(
+                "❌ This button can only be used in the Treasure Hunt channel.",
+                ephemeral=True
+            )
+            return
+
+        hunt = await get_treasure_hunt()
+
+        if hunt is None or hunt[1] != "open":
+            await interaction.response.send_message(
+                "⚠️ The Treasure Hunt is not currently open.",
+                ephemeral=True
+            )
+            return
+
+        # -----------------------------------------
+        # CLOSE SUBMISSIONS
+        # -----------------------------------------
+
+        await update_treasure_hunt(
+            status="closed",
+            submission_open=0,
+            closed_at=datetime.now(
+                timezone.utc
+            ).isoformat()
+        )
+
+        # -----------------------------------------
+        # REVEAL SUBMISSION CHANNEL
+        # -----------------------------------------
+
+        submission_channel = interaction.guild.get_channel(
+            TREASURE_HUNT_SUBMISSION_CHANNEL_ID
+        )
+
+        if submission_channel:
+
+            treasure_role = interaction.guild.get_role(
+                TREASURE_HUNT_ROLE_ID
+            )
+
+            try:
+
+                # Allow the Treasure Hunt role to see submissions
+                if treasure_role:
+                    await submission_channel.set_permissions(
+                        treasure_role,
+                        view_channel=True
+                    )
+
+            except discord.Forbidden:
+
+                await interaction.response.send_message(
+                    "❌ I don't have permission to change the submission channel permissions.",
+                    ephemeral=True
+                )
+
+                return
+
+        await interaction.response.send_message(
+            "🔒 **Treasure Hunt submissions are now closed.**\n\n"
+            "The submission channel is now visible to Treasure Hunt participants "
+            "so they can review the submissions.",
+            ephemeral=False
+        )
+
+    # ========================================================
+    # REVEAL ANSWERS
+    # ========================================================
+
+    @discord.ui.button(
+        label="REVEAL ANSWERS",
+        emoji="🎯",
+        style=discord.ButtonStyle.primary,
+        custom_id="treasure_reveal"
+    )
+    async def reveal_answers(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        if not is_treasure_hunt_controller(
+            interaction.user.id
+        ):
+            await interaction.response.send_message(
+                "❌ You are not authorized to control the Treasure Hunt.",
+                ephemeral=True
+            )
+            return
+
+        if interaction.channel_id != TREASURE_HUNT_CHANNEL_ID:
+            await interaction.response.send_message(
+                "❌ This button can only be used in the Treasure Hunt channel.",
+                ephemeral=True
+            )
+            return
+
+        hunt = await get_treasure_hunt()
+
+        if hunt is None:
+            await interaction.response.send_message(
+                "❌ No Treasure Hunt found.",
+                ephemeral=True
+            )
+            return
+
+        if hunt[1] != "closed":
+            await interaction.response.send_message(
+                "❌ Close submissions before revealing the answers.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.send_modal(
+            TreasureRevealModal()
+        )
+
+    # ========================================================
+    # FIND WINNER
+    # ========================================================
+
+    @discord.ui.button(
+        label="FIND WINNER",
+        emoji="🏆",
+        style=discord.ButtonStyle.primary,
+        custom_id="treasure_find_winner"
+    )
+    async def find_winner(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        if not is_treasure_hunt_controller(
+            interaction.user.id
+        ):
+            await interaction.response.send_message(
+                "❌ You are not authorized to control the Treasure Hunt.",
+                ephemeral=True
+            )
+            return
+
+        if interaction.channel_id != TREASURE_HUNT_CHANNEL_ID:
+            await interaction.response.send_message(
+                "❌ This button can only be used in the Treasure Hunt channel.",
+                ephemeral=True
+            )
+            return
+
+        await find_treasure_winner(
+            interaction
+        )
+
+class TreasureHuntSubmissionView(
+    discord.ui.View
+):
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Submit Treasure Hunt",
+        emoji="🎯",
+        style=discord.ButtonStyle.success,
+        custom_id="treasure_submit"
+    )
+    async def submit(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        hunt = await get_treasure_hunt()
+
+        if hunt is None or hunt[1] != "open":
+            await interaction.response.send_message(
+                "❌ Treasure Hunt submissions are currently closed.",
+                ephemeral=True
+            )
+            return
+
+        # -----------------------------------------
+        # CHECK EXISTING SUBMISSION
+        # -----------------------------------------
+
+        async with aiosqlite.connect(DB_PATH) as db:
+
+            cursor = await db.execute(
+                """
+                SELECT id
+                FROM treasure_hunt_submissions
+                WHERE treasure_hunt_id = 1
+                AND user_id = ?
+                LIMIT 1
+                """,
+                (interaction.user.id,)
+            )
+
+            existing = await cursor.fetchone()
+
+            await cursor.close()
+
+        if existing:
+
+            await interaction.response.send_message(
+                "❌ You have already submitted your Treasure Hunt answers.",
+                ephemeral=True
+            )
+
+            return
+
+        await interaction.response.send_modal(
+            TreasureSubmissionModal()
+        )
+
+class TreasureSubmissionModal(
+    discord.ui.Modal,
+    title="🏴‍☠️ Treasure Hunt Submission"
+):
+
+    answer_1 = discord.ui.TextInput(
+        label="Answer 1",
+        placeholder="Slot Name - Provider",
+        required=True,
+        max_length=200
+    )
+
+    answer_2 = discord.ui.TextInput(
+        label="Answer 2",
+        placeholder="Slot Name - Provider",
+        required=True,
+        max_length=200
+    )
+
+    answer_3 = discord.ui.TextInput(
+        label="Answer 3",
+        placeholder="Slot Name - Provider",
+        required=True,
+        max_length=200
+    )
+
+    answer_4 = discord.ui.TextInput(
+        label="Answer 4",
+        placeholder="Slot Name - Provider",
+        required=True,
+        max_length=200
+    )
+
+    answer_5 = discord.ui.TextInput(
+        label="Answer 5",
+        placeholder="Slot Name - Provider",
+        required=True,
+        max_length=200
+    )
+
+    async def on_submit(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        # -----------------------------------------
+        # CHECK TREASURE HUNT
+        # -----------------------------------------
+
+        hunt = await get_treasure_hunt()
+
+        if hunt is None or hunt[1] != "open":
+
+            await interaction.response.send_message(
+                "❌ Treasure Hunt submissions are closed.",
+                ephemeral=True
+            )
+
+            return
+
+        # -----------------------------------------
+        # SAVE ANSWERS TEMPORARILY
+        # -----------------------------------------
+
+        treasure_pending_submissions[
+            interaction.user.id
+        ] = {
+            "answer_1": self.answer_1.value.strip(),
+            "answer_2": self.answer_2.value.strip(),
+            "answer_3": self.answer_3.value.strip(),
+            "answer_4": self.answer_4.value.strip(),
+            "answer_5": self.answer_5.value.strip()
+        }
+
+        # -----------------------------------------
+        # ASK FOR GAMDOM ID
+        # -----------------------------------------
+
+        await interaction.response.send_message(
+            "✅ **Treasure answers recorded!**\n\n"
+            "One last step — click the button below "
+            "to enter your Gamdom ID.",
+            view=TreasureGamdomIDButtonView(),
+            ephemeral=True
+        )
+
+class TreasureGamdomIDButtonView(discord.ui.View):
+
+    def __init__(self):
+        super().__init__(timeout=300)
+
+    @discord.ui.button(
+        label="Enter Gamdom ID",
+        emoji="🎰",
+        style=discord.ButtonStyle.success
+    )
+    async def enter_gamdom_id(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        # -----------------------------------------
+        # CHECK THAT USER HAS PENDING ANSWERS
+        # -----------------------------------------
+
+        if interaction.user.id not in treasure_pending_submissions:
+
+            await interaction.response.send_message(
+                "❌ Your Treasure Hunt answers could not be found.\n\n"
+                "Please click **Submit Treasure Hunt** again.",
+                ephemeral=True
+            )
+
+            return
+
+        # -----------------------------------------
+        # CHECK TREASURE HUNT IS STILL OPEN
+        # -----------------------------------------
+
+        hunt = await get_treasure_hunt()
+
+        if hunt is None or hunt[1] != "open":
+
+            # Remove temporary data
+            treasure_pending_submissions.pop(
+                interaction.user.id,
+                None
+            )
+
+            await interaction.response.send_message(
+                "❌ Treasure Hunt submissions are now closed.",
+                ephemeral=True
+            )
+
+            return
+
+        # -----------------------------------------
+        # OPEN GAMDOM ID MODAL
+        # -----------------------------------------
+
+        await interaction.response.send_modal(
+            TreasureGamdomIDModal()
+        )
+
+class TreasureGamdomIDModal(
+    discord.ui.Modal,
+    title="🎰 Gamdom ID"
+):
+
+    gamdom_id = discord.ui.TextInput(
+        label="Gamdom ID",
+        placeholder="Enter your Gamdom ID",
+        required=True,
+        max_length=100
+    )
+
+    async def on_submit(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        # -----------------------------------------
+        # CHECK PENDING ANSWERS
+        # -----------------------------------------
+
+        pending = treasure_pending_submissions.get(
+            interaction.user.id
+        )
+
+        if pending is None:
+
+            await interaction.response.send_message(
+                "❌ Your Treasure Hunt answers could not be found.\n\n"
+                "Please start your submission again.",
+                ephemeral=True
+            )
+
+            return
+
+        # -----------------------------------------
+        # CHECK TREASURE HUNT
+        # -----------------------------------------
+
+        hunt = await get_treasure_hunt()
+
+        if hunt is None or hunt[1] != "open":
+
+            treasure_pending_submissions.pop(
+                interaction.user.id,
+                None
+            )
+
+            await interaction.response.send_message(
+                "❌ Treasure Hunt submissions are now closed.",
+                ephemeral=True
+            )
+
+            return
+
+        # -----------------------------------------
+        # GET GAMDOM ID
+        # -----------------------------------------
+
+        gamdom_id = self.gamdom_id.value.strip()
+
+        if not gamdom_id:
+
+            await interaction.response.send_message(
+                "❌ Please enter your Gamdom ID.",
+                ephemeral=True
+            )
+
+            return
+
+        # -----------------------------------------
+        # CURRENT TIME
+        # -----------------------------------------
+
+        now = datetime.now(timezone.utc)
+
+        # -----------------------------------------
+        # SAVE TO DATABASE
+        # -----------------------------------------
+
+        try:
+
+            async with aiosqlite.connect(DB_PATH) as db:
+
+                await db.execute(
+                    """
+                    INSERT INTO treasure_hunt_submissions (
+                        treasure_hunt_id,
+                        user_id,
+                        username,
+                        answer_1,
+                        answer_2,
+                        answer_3,
+                        answer_4,
+                        answer_5,
+                        gamdom_id,
+                        submitted_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        1,
+                        interaction.user.id,
+                        interaction.user.display_name,
+                        pending["answer_1"],
+                        pending["answer_2"],
+                        pending["answer_3"],
+                        pending["answer_4"],
+                        pending["answer_5"],
+                        gamdom_id,
+                        now.isoformat()
+                    )
+                )
+
+                await db.commit()
+
+        except aiosqlite.IntegrityError:
+
+            # Remove temporary data
+            treasure_pending_submissions.pop(
+                interaction.user.id,
+                None
+            )
+
+            await interaction.response.send_message(
+                "❌ You have already submitted your answers.",
+                ephemeral=True
+            )
+
+            return
+
+        # -----------------------------------------
+        # REMOVE TEMPORARY DATA
+        # -----------------------------------------
+
+        treasure_pending_submissions.pop(
+            interaction.user.id,
+            None
+        )
+
+        # -----------------------------------------
+        # SEND SUBMISSION LOG
+        # -----------------------------------------
+
+        channel = interaction.guild.get_channel(
+            TREASURE_HUNT_SUBMISSION_CHANNEL_ID
+        )
+
+        if channel:
+
+            embed = discord.Embed(
+                title="🏴‍☠️ Treasure Hunt Submission",
+                color=discord.Color.blurple(),
+                timestamp=now
+            )
+
+            embed.set_thumbnail(
+                url=interaction.user.display_avatar.url
+            )
+
+            embed.add_field(
+                name="👤 Submitted By",
+                value=interaction.user.mention,
+                inline=False
+            )
+
+            embed.add_field(
+                name="1️⃣ Answer 1",
+                value=pending["answer_1"],
+                inline=False
+            )
+
+            embed.add_field(
+                name="2️⃣ Answer 2",
+                value=pending["answer_2"],
+                inline=False
+            )
+
+            embed.add_field(
+                name="3️⃣ Answer 3",
+                value=pending["answer_3"],
+                inline=False
+            )
+
+            embed.add_field(
+                name="4️⃣ Answer 4",
+                value=pending["answer_4"],
+                inline=False
+            )
+
+            embed.add_field(
+                name="5️⃣ Answer 5",
+                value=pending["answer_5"],
+                inline=False
+            )
+
+            embed.add_field(
+                name="🆔 Gamdom ID",
+                value=gamdom_id,
+                inline=False
+            )
+
+            embed.set_footer(
+                text="Treasure Hunt Submission"
+            )
+
+            await channel.send(
+                embed=embed
+            )
+
+        # -----------------------------------------
+        # CONFIRM TO USER
+        # -----------------------------------------
+
+        await interaction.response.send_message(
+            "✅ **Your Treasure Hunt submission has been recorded!**\n\n"
+            "Your answers have been submitted successfully.",
+            ephemeral=True
+        )
+
+class TreasureRevealModal(
+    discord.ui.Modal,
+    title="🎯 Treasure Hunt Answer Key"
+):
+
+    answer_1 = discord.ui.TextInput(
+        label="Correct Answer 1",
+        placeholder="Slot Name - Provider",
+        required=True,
+        max_length=200
+    )
+
+    answer_2 = discord.ui.TextInput(
+        label="Correct Answer 2",
+        placeholder="Slot Name - Provider",
+        required=True,
+        max_length=200
+    )
+
+    answer_3 = discord.ui.TextInput(
+        label="Correct Answer 3",
+        placeholder="Slot Name - Provider",
+        required=True,
+        max_length=200
+    )
+
+    answer_4 = discord.ui.TextInput(
+        label="Correct Answer 4",
+        placeholder="Slot Name - Provider",
+        required=True,
+        max_length=200
+    )
+
+    answer_5 = discord.ui.TextInput(
+        label="Correct Answer 5",
+        placeholder="Slot Name - Provider",
+        required=True,
+        max_length=200
+    )
+
+    async def on_submit(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        hunt = await get_treasure_hunt()
+
+        if hunt is None or hunt[1] != "closed":
+
+            await interaction.response.send_message(
+                "❌ The Treasure Hunt must be closed before revealing answers.",
+                ephemeral=True
+            )
+
+            return
+
+        await update_treasure_hunt(
+            answer_1=self.answer_1.value.strip(),
+            answer_2=self.answer_2.value.strip(),
+            answer_3=self.answer_3.value.strip(),
+            answer_4=self.answer_4.value.strip(),
+            answer_5=self.answer_5.value.strip(),
+            status="revealed",
+            revealed_at=datetime.now(
+                timezone.utc
+            ).isoformat()
+        )
+
+        embed = discord.Embed(
+            title="🎯 TREASURE ANSWERS REVEALED",
+            description="The official Treasure Hunt answers have been recorded.",
+            color=discord.Color.gold()
+        )
+
+        for number, answer in enumerate(
+            (
+                self.answer_1.value,
+                self.answer_2.value,
+                self.answer_3.value,
+                self.answer_4.value,
+                self.answer_5.value
+            ),
+            start=1
+        ):
+
+            embed.add_field(
+                name=f"{number}️⃣ Treasure {number}",
+                value=answer,
+                inline=False
+            )
+
+        await interaction.response.send_message(
+            embed=embed
+        )
+
+def normalize_treasure_answer(
+    answer: str
+) -> str:
+
+    return " ".join(
+        answer.strip().casefold().split()
+    )
+
+
+async def find_treasure_winner(
+    interaction: discord.Interaction
+):
+
+    hunt = await get_treasure_hunt()
+
+    if hunt is None:
+
+        await interaction.response.send_message(
+            "❌ No Treasure Hunt is currently configured.",
+            ephemeral=True
+        )
+
+        return
+
+    status = hunt[1]
+
+    if status != "revealed":
+
+        await interaction.response.send_message(
+            "❌ You must reveal the correct answers first.",
+            ephemeral=True
+        )
+
+        return
+
+    correct_answers = [
+        hunt[6],
+        hunt[7],
+        hunt[8],
+        hunt[9],
+        hunt[10]
+    ]
+
+    if any(
+        answer is None
+        for answer in correct_answers
+    ):
+
+        await interaction.response.send_message(
+            "❌ The correct Treasure Hunt answers are incomplete.",
+            ephemeral=True
+        )
+
+        return
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        cursor = await db.execute(
+            """
+            SELECT
+                id,
+                user_id,
+                username,
+                answer_1,
+                answer_2,
+                answer_3,
+                answer_4,
+                answer_5,
+                gamdom_id,
+                submitted_at
+            FROM treasure_hunt_submissions
+            WHERE treasure_hunt_id = 1
+            ORDER BY id ASC
+            """
+        )
+
+        submissions = await cursor.fetchall()
+
+        await cursor.close()
+
+    winner = None
+
+    for submission in submissions:
+
+        (
+            submission_id,
+            user_id,
+            username,
+            answer_1,
+            answer_2,
+            answer_3,
+            answer_4,
+            answer_5,
+            gamdom_id,
+            submitted_at
+        ) = submission
+
+        submitted_answers = [
+            answer_1,
+            answer_2,
+            answer_3,
+            answer_4,
+            answer_5
+        ]
+
+        if all(
+            normalize_treasure_answer(
+                submitted_answers[i]
+            )
+            ==
+            normalize_treasure_answer(
+                correct_answers[i]
+            )
+            for i in range(5)
+        ):
+
+            winner = submission
+            break
+
+    # ========================================================
+    # NO WINNER
+    # ========================================================
+
+    if winner is None:
+
+        await update_treasure_hunt(
+            status="completed",
+            winner_id=None,
+            winner_found_at=datetime.now(
+                timezone.utc
+            ).isoformat()
+        )
+
+        embed = discord.Embed(
+            title="❌ TREASURE HUNT — NO WINNER",
+            description=(
+                "Unfortunately, nobody submitted all "
+                "**5 correct treasures**."
+            ),
+            color=discord.Color.red()
+        )
+
+        embed.add_field(
+            name="🏴‍☠️ Result",
+            value="No winner was found.",
+            inline=False
+        )
+
+        await interaction.response.send_message(
+            embed=embed
+        )
+
+        return
+
+    # ========================================================
+    # WINNER
+    # ========================================================
+
+    (
+        submission_id,
+        user_id,
+        username,
+        answer_1,
+        answer_2,
+        answer_3,
+        answer_4,
+        answer_5,
+        gamdom_id,
+        submitted_at
+    ) = winner
+
+    await update_treasure_hunt(
+        status="completed",
+        winner_id=user_id,
+        winner_found_at=datetime.now(
+            timezone.utc
+        ).isoformat()
+    )
+
+    member = interaction.guild.get_member(
+        user_id
+    )
+
+    if member:
+
+        winner_mention = member.mention
+        thumbnail_url = member.display_avatar.url
+
+    else:
+
+        winner_mention = f"<@{user_id}>"
+        thumbnail_url = None
+
+    embed = discord.Embed(
+        title="🏆 TREASURE HUNT WINNER!",
+        description=(
+            f"🎉 Congratulations {winner_mention}!\n\n"
+            "You found all **5 correct treasures**!"
+        ),
+        color=discord.Color.gold()
+    )
+
+    if thumbnail_url:
+
+        embed.set_thumbnail(
+            url=thumbnail_url
+        )
+
+    embed.add_field(
+        name="👤 Winner",
+        value=winner_mention,
+        inline=False
+    )
+
+    embed.add_field(
+        name="1️⃣ Treasure 1",
+        value=answer_1,
+        inline=False
+    )
+
+    embed.add_field(
+        name="2️⃣ Treasure 2",
+        value=answer_2,
+        inline=False
+    )
+
+    embed.add_field(
+        name="3️⃣ Treasure 3",
+        value=answer_3,
+        inline=False
+    )
+
+    embed.add_field(
+        name="4️⃣ Treasure 4",
+        value=answer_4,
+        inline=False
+    )
+
+    embed.add_field(
+        name="5️⃣ Treasure 5",
+        value=answer_5,
+        inline=False
+    )
+
+    embed.add_field(
+        name="💰 Prize",
+        value="**$100 CAD**",
+        inline=True
+    )
+
+    embed.add_field(
+        name="🆔 Gamdom ID",
+        value=gamdom_id,
+        inline=True
+    )
+
+    embed.set_footer(
+        text="WildLines Treasure Hunt"
+    )
+
+    await interaction.response.send_message(
+        embed=embed
+    )
+
+@bot.tree.command(
+    name="treasure_hunt",
+    description="Start a new Treasure Hunt."
+)
+async def treasure_hunt(
+    interaction: discord.Interaction
+):
+
+    # -----------------------------------------
+    # AUTHORIZATION
+    # -----------------------------------------
+
+    if not is_treasure_hunt_controller(
+        interaction.user.id
+    ):
+
+        await interaction.response.send_message(
+            "❌ You are not authorized to start a Treasure Hunt.",
+            ephemeral=True
+        )
+
+        return
+
+    # -----------------------------------------
+    # CHANNEL CHECK
+    # -----------------------------------------
+
+    if interaction.channel_id != TREASURE_HUNT_CHANNEL_ID:
+
+        await interaction.response.send_message(
+            "❌ The Treasure Hunt command can only be used "
+            "in the Treasure Hunt channel.",
+            ephemeral=True
+        )
+
+        return
+
+    # -----------------------------------------
+    # RESET OLD HUNT
+    # -----------------------------------------
+
+    await reset_treasure_hunt()
+
+    # -----------------------------------------
+    # LOCK SUBMISSION CHANNEL
+    # -----------------------------------------
+
+    submission_channel = interaction.guild.get_channel(
+        TREASURE_HUNT_SUBMISSION_CHANNEL_ID
+    )
+
+    if submission_channel:
+
+        try:
+
+            await submission_channel.set_permissions(
+                interaction.guild.default_role,
+                view_channel=False
+            )
+
+        except discord.Forbidden:
+
+            await interaction.response.send_message(
+                "❌ I don't have permission to manage the "
+                "Treasure Hunt submission channel.",
+                ephemeral=True
+            )
+
+            return
+
+    # -----------------------------------------
+    # SAVE CHANNEL
+    # -----------------------------------------
+
+    await update_treasure_hunt(
+        channel_id=interaction.channel_id
+    )
+
+    # -----------------------------------------
+    # SEND INITIAL EMBED
+    # -----------------------------------------
+
+    embed = create_treasure_hunt_embed()
+
+    message = await interaction.channel.send(
+        embed=embed,
+        view=TreasureHuntControlView()
+    )
+
+    await update_treasure_hunt(
+        announcement_message_id=message.id
+    )
+
+    # -----------------------------------------
+    # CONFIRM
+    # -----------------------------------------
+
+    await interaction.response.send_message(
+        "🏴‍☠️ **New Treasure Hunt created!**\n\n"
+        "The previous Treasure Hunt data has been cleared.",
+        ephemeral=True
     )
 
 
