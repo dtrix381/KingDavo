@@ -72,6 +72,9 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 JOIN_EMOJI = "🎰"
 manual_games = {}  # Stores {channel_id: (players, provider_name)}
 
+YOUTUBE_CHANNEL_ID = "UC5K520DcXsQ6WEY7gZgTbPg"
+YOUTUBE_DISCORD_CHANNEL_ID = 1176520510515970054
+
 PRIZE_APPROVAL_CHANNEL_ID = 1536611050722426930
 PRIZE_LOG_CHANNEL_ID = 1536535520946032744
 PRIZE_APPROVER_ID = 1376017792209387520
@@ -260,6 +263,15 @@ async def on_ready():
             "🏷️ Server Tag hourly scanner started "
             "(every 1 hour)"
         )
+
+    # -----------------------------------------
+    # YOUTUBE NOTIFICATIONS
+    # -----------------------------------------
+
+    if not youtube_notification_task.is_running():
+        youtube_notification_task.start()
+
+        print("▶️ YouTube notification system started")
 
 
 @bot.event
@@ -10370,6 +10382,224 @@ async def treasure_hunt(
         "The previous Treasure Hunt data has been cleared.",
         ephemeral=True
     )
+
+
+@tasks.loop(minutes=5)
+async def youtube_notification_task():
+
+    feed_url = (
+        "https://www.youtube.com/feeds/videos.xml"
+        f"?channel_id={YOUTUBE_CHANNEL_ID}"
+    )
+
+    try:
+
+        async with aiohttp.ClientSession() as session:
+
+            async with session.get(feed_url) as response:
+
+                if response.status != 200:
+
+                    print(
+                        f"❌ YouTube feed error: HTTP {response.status}"
+                    )
+
+                    return
+
+                xml_data = await response.text()
+
+        root = ET.fromstring(xml_data)
+
+        namespace = {
+            "atom": "http://www.w3.org/2005/Atom",
+            "yt": "http://www.youtube.com/xml/schemas/2015"
+        }
+
+        entry = root.find(
+            "atom:entry",
+            namespace
+        )
+
+        if entry is None:
+            return
+
+        video_id_element = entry.find(
+            "yt:videoId",
+            namespace
+        )
+
+        title_element = entry.find(
+            "atom:title",
+            namespace
+        )
+
+        published_element = entry.find(
+            "atom:published",
+            namespace
+        )
+
+        if video_id_element is None:
+            return
+
+        video_id = video_id_element.text
+
+        title = (
+            title_element.text
+            if title_element is not None
+            else "Unknown Title"
+        )
+
+        published = (
+            published_element.text
+            if published_element is not None
+            else None
+        )
+
+        video_url = (
+            f"https://www.youtube.com/watch?v={video_id}"
+        )
+
+        thumbnail_url = (
+            f"https://i.ytimg.com/vi/{video_id}/maxresdefault.jpg"
+        )
+
+        # -----------------------------------------
+        # CHECK IF ALREADY POSTED
+        # -----------------------------------------
+
+        async with aiosqlite.connect(DB_PATH) as db:
+
+            cursor = await db.execute(
+                """
+                SELECT 1
+                FROM youtube_notifications
+                WHERE video_id = ?
+                LIMIT 1
+                """,
+                (video_id,)
+            )
+
+            existing = await cursor.fetchone()
+
+        if existing:
+
+            return
+
+        # -----------------------------------------
+        # DISCORD CHANNEL
+        # -----------------------------------------
+
+        channel = bot.get_channel(
+            YOUTUBE_DISCORD_CHANNEL_ID
+        )
+
+        if channel is None:
+
+            print(
+                "❌ YouTube Discord channel not found."
+            )
+
+            return
+
+        # -----------------------------------------
+        # CREATE EMBED
+        # -----------------------------------------
+
+        embed = discord.Embed(
+            title="🎬 NEW WILDLINES YOUTUBE VIDEO",
+            description=(
+                f"**{title}**\n\n"
+                "WildLinesOfficial just uploaded a new video!"
+            ),
+            url=video_url
+        )
+
+        embed.set_author(
+            name="WildLines"
+        )
+
+        # LARGE THUMBNAIL
+        embed.set_image(
+            url=thumbnail_url
+        )
+
+        embed.add_field(
+            name="▶️ Watch Now",
+            value=f"[YouTube Video]({video_url})",
+            inline=False
+        )
+
+        # -----------------------------------------
+        # LOCALIZED DISCORD TIME
+        # -----------------------------------------
+
+        if published:
+
+            published_dt = datetime.fromisoformat(
+                published.replace("Z", "+00:00")
+            )
+
+            discord_timestamp = int(
+                published_dt.timestamp()
+            )
+
+            embed.add_field(
+                name="📅 Published",
+                value=(
+                    f"<t:{discord_timestamp}:F>\n"
+                    f"(<t:{discord_timestamp}:R>)"
+                ),
+                inline=False
+            )
+
+        embed.set_footer(
+            text="WildLinesOfficial • YouTube"
+        )
+
+        # -----------------------------------------
+        # SEND
+        # -----------------------------------------
+
+        await channel.send(
+            embed=embed
+        )
+
+        # -----------------------------------------
+        # SAVE VIDEO
+        # -----------------------------------------
+
+        async with aiosqlite.connect(DB_PATH) as db:
+
+            await db.execute(
+                """
+                INSERT OR IGNORE INTO youtube_notifications
+                (
+                    video_id,
+                    video_title,
+                    video_url,
+                    published_at
+                )
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    video_id,
+                    title,
+                    video_url,
+                    published
+                )
+            )
+
+            await db.commit()
+
+        print(
+            f"📺 YouTube notification sent: {title}"
+        )
+
+    except Exception as e:
+
+        print(
+            f"❌ YouTube notification error: {e}"
+        )
 
 
 if __name__ == "__main__":
