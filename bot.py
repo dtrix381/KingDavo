@@ -10392,21 +10392,79 @@ async def youtube_notification_task():
         f"?channel_id={YOUTUBE_CHANNEL_ID}"
     )
 
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/150.0.0.0 Safari/537.36"
+        ),
+        "Accept": (
+            "application/atom+xml,application/xml,"
+            "text/xml;q=0.9,*/*;q=0.8"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+
     try:
 
-        async with aiohttp.ClientSession() as session:
+        timeout = aiohttp.ClientTimeout(
+            total=30
+        )
 
-            async with session.get(feed_url) as response:
+        async with aiohttp.ClientSession(
+            headers=headers,
+            timeout=timeout
+        ) as session:
 
-                if response.status != 200:
+            xml_data = None
+
+            # -----------------------------------------
+            # TRY UP TO 3 TIMES
+            # -----------------------------------------
+
+            for attempt in range(1, 4):
+
+                try:
+
+                    async with session.get(
+                        feed_url
+                    ) as response:
+
+                        if response.status == 200:
+
+                            xml_data = await response.text()
+
+                            break
+
+                        print(
+                            f"⚠️ YouTube feed attempt "
+                            f"{attempt}/3 returned HTTP "
+                            f"{response.status}"
+                        )
+
+                except Exception as e:
 
                     print(
-                        f"❌ YouTube feed error: HTTP {response.status}"
+                        f"⚠️ YouTube feed attempt "
+                        f"{attempt}/3 failed: {e}"
                     )
 
-                    return
+                if attempt < 3:
 
-                xml_data = await response.text()
+                    await asyncio.sleep(5)
+
+            if xml_data is None:
+
+                print(
+                    "❌ YouTube feed unavailable after "
+                    "3 attempts."
+                )
+
+                return
+
+        # -----------------------------------------
+        # PARSE XML
+        # -----------------------------------------
 
         root = ET.fromstring(xml_data)
 
@@ -10421,6 +10479,11 @@ async def youtube_notification_task():
         )
 
         if entry is None:
+
+            print(
+                "⚠️ YouTube feed contains no entries."
+            )
+
             return
 
         video_id_element = entry.find(
@@ -10439,6 +10502,11 @@ async def youtube_notification_task():
         )
 
         if video_id_element is None:
+
+            print(
+                "⚠️ YouTube entry has no video ID."
+            )
+
             return
 
         video_id = video_id_element.text
@@ -10460,7 +10528,8 @@ async def youtube_notification_task():
         )
 
         thumbnail_url = (
-            f"https://i.ytimg.com/vi/{video_id}/maxresdefault.jpg"
+            f"https://i.ytimg.com/vi/"
+            f"{video_id}/maxresdefault.jpg"
         )
 
         # -----------------------------------------
@@ -10509,7 +10578,8 @@ async def youtube_notification_task():
             title="🎬 NEW WILDLINES YOUTUBE VIDEO",
             description=(
                 f"**{title}**\n\n"
-                "WildLinesOfficial just uploaded a new video!"
+                "WildLinesOfficial just uploaded "
+                "a new video!"
             ),
             url=video_url
         )
@@ -10519,13 +10589,16 @@ async def youtube_notification_task():
         )
 
         # LARGE THUMBNAIL
+
         embed.set_image(
             url=thumbnail_url
         )
 
         embed.add_field(
             name="▶️ Watch Now",
-            value=f"[YouTube Video]({video_url})",
+            value=(
+                f"[YouTube Video]({video_url})"
+            ),
             inline=False
         )
 
