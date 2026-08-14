@@ -5440,7 +5440,48 @@ class StreamPrizeView(discord.ui.View):
             ephemeral=True
         )
 
+    @discord.ui.button(
+        label="Website",
+        emoji="🌐",
+        style=discord.ButtonStyle.primary,
+        custom_id="stream_prize_website"
+    )
+    async def website(
+            self,
+            interaction: discord.Interaction,
+            button: discord.ui.Button
+    ):
+        await interaction.response.send_message(
+            "🌐 **Website Prizes**\n\n"
+            "Select the type of prize redeemed with website points.",
+            view=WebsitePrizeView(),
+            ephemeral=True
+        )
 
+class WebsitePrizeView(discord.ui.View):
+
+    def __init__(self):
+        super().__init__(timeout=300)
+
+    @discord.ui.button(
+        label="Bonus Buy",
+        emoji="🎁",
+        style=discord.ButtonStyle.success,
+        custom_id="website_bonus_buy"
+    )
+    async def bonus_buy(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        await interaction.response.send_message(
+            "🎁 **Bonus Buy**\n\n"
+            "Select the winner below.",
+            view=PrizeMemberSelectView("Bonus Buy"),
+            ephemeral=True
+        )
+        
 def get_member_from_input(guild: discord.Guild, value: str):
     """
     Accepts:
@@ -5551,6 +5592,12 @@ class PrizeMemberSelectView(discord.ui.View):
                 TopChatterModal(member.id)
             )
             
+        elif self.prize_type == "Bonus Buy":
+
+            await interaction.response.send_modal(
+                BonusBuyModal(member.id)
+            )
+    
         elif self.prize_type == "Twitter Giveaway":
 
             await interaction.response.send_modal(
@@ -5636,7 +5683,77 @@ class PlinkoChoiceView(discord.ui.View):
             ephemeral=True
         )
 
+class BonusBuyModal(
+    discord.ui.Modal,
+    title="🎁 Bonus Buy"
+):
 
+    prize = discord.ui.TextInput(
+        label="Prize",
+        placeholder="Example: $50",
+        required=True,
+        max_length=100
+    )
+
+    def __init__(self, winner_id: int):
+        super().__init__()
+
+        self.winner_id = winner_id
+
+    async def on_submit(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        member = interaction.guild.get_member(
+            self.winner_id
+        )
+
+        if member is None:
+
+            await interaction.response.send_message(
+                "❌ That member is no longer in the server.",
+                ephemeral=True
+            )
+
+            return
+
+        prize_value = parse_money(
+            self.prize.value
+        )
+
+        if prize_value is None:
+
+            await interaction.response.send_message(
+                "❌ Invalid prize amount.\n"
+                "Example: `$50`",
+                ephemeral=True
+            )
+
+            return
+
+        prize_data = {
+            "winner_id": member.id,
+            "winner_name": member.display_name,
+            "winner_mention": member.mention,
+
+            "prize_type": "Bonus Buy",
+
+            "slot_name": None,
+            "quantity": None,
+            "bet_size": None,
+
+            "prize_value": prize_value,
+            "wild_points": None,
+
+            "kick_link": None
+        }
+
+        await show_prize_confirmation(
+            interaction,
+            prize_data
+        )
+        
 class FreeSpinsModal(
     discord.ui.Modal,
     title="🎰 Free Spins Prize"
