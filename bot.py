@@ -10694,12 +10694,17 @@ async def x_notification_task():
 
     try:
 
-        async with aiohttp.ClientSession() as session:
+        # -----------------------------------------
+        # FETCH X POSTS
+        # -----------------------------------------
 
-            async with session.get(
-                url,
-                timeout=aiohttp.ClientTimeout(total=20)
-            ) as response:
+        timeout = aiohttp.ClientTimeout(total=20)
+
+        async with aiohttp.ClientSession(
+            timeout=timeout
+        ) as session:
+
+            async with session.get(url) as response:
 
                 if response.status != 200:
 
@@ -10715,11 +10720,16 @@ async def x_notification_task():
         # GET POSTS
         # -----------------------------------------
 
-        posts = data.get("results", [])
+        posts = data.get(
+            "results",
+            []
+        )
 
         if not posts:
 
-            print("⚠️ X feed returned no posts.")
+            print(
+                "⚠️ X feed returned no posts."
+            )
 
             return
 
@@ -10730,20 +10740,53 @@ async def x_notification_task():
         posts = [
             post
             for post in posts
-            if post.get("type") == "status"
-            and post.get("id")
+            if (
+                post.get("type") == "status"
+                and post.get("id")
+            )
         ]
 
         if not posts:
 
+            print(
+                "⚠️ X feed contains no status posts."
+            )
+
             return
 
         # -----------------------------------------
+        # SORT BY CREATED TIME
         # NEWEST FIRST
         # -----------------------------------------
 
+        def get_post_timestamp(post):
+
+            timestamp = post.get(
+                "created_timestamp"
+            )
+
+            if timestamp:
+
+                try:
+                    return int(timestamp)
+
+                except (ValueError, TypeError):
+
+                    pass
+
+            # Fallback to X ID
+            try:
+
+                return int(
+                    post.get("id", 0)
+                )
+
+            except (ValueError, TypeError):
+
+                return 0
+
         posts.sort(
-            key=lambda post: int(post["id"]),
+            key=get_post_timestamp,
             reverse=True
         )
 
@@ -10757,37 +10800,38 @@ async def x_notification_task():
                 """
                 SELECT post_id
                 FROM x_notifications
-                ORDER BY id DESC
-                LIMIT 1
                 """
             )
 
-            latest_saved = await cursor.fetchone()
+            rows = await cursor.fetchall()
+
+        saved_ids = {
+            str(row[0])
+            for row in rows
+        }
 
         # -----------------------------------------
         # FIRST STARTUP
         # -----------------------------------------
 
-        if latest_saved is None:
+        if not saved_ids:
 
             latest_post = posts[0]
 
-            await send_x_notification(
+            sent = await send_x_notification(
                 latest_post
             )
 
-            print(
-                "🐦 First/latest X post sent and saved."
-            )
+            if sent:
+
+                print(
+                    "🐦 First/latest X post sent and saved."
+                )
 
             return
 
-        latest_saved_id = str(
-            latest_saved[0]
-        )
-
         # -----------------------------------------
-        # FIND NEW POSTS
+        # FIND ONLY UNSAVED POSTS
         # -----------------------------------------
 
         new_posts = []
@@ -10795,38 +10839,312 @@ async def x_notification_task():
         for post in posts:
 
             post_id = str(
-                post["id"]
+                post.get("id")
             )
 
-            if post_id == latest_saved_id:
+            if post_id not in saved_ids:
 
-                break
-
-            new_posts.append(post)
+                new_posts.append(
+                    post
+                )
 
         if not new_posts:
 
             return
 
         # -----------------------------------------
-        # SEND OLDEST NEW POST FIRST
+        # OLDEST NEW POST FIRST
         # -----------------------------------------
 
-        new_posts.reverse()
+        new_posts.sort(
+            key=get_post_timestamp
+        )
+
+        print(
+            f"🐦 Found {len(new_posts)} new X post(s)."
+        )
+
+        # -----------------------------------------
+        # SEND NEW POSTS
+        # -----------------------------------------
 
         for post in new_posts:
 
-            await send_x_notification(
+            sent = await send_x_notification(
                 post
             )
 
-            await asyncio.sleep(1)
+            if sent:
+
+                await asyncio.sleep(1)
+
+    except asyncio.CancelledError:
+
+        raise
 
     except Exception as e:
 
         print(
             f"❌ X notification error: {e}"
         )
+
+
+async def send_x_notification(post):
+
+    try:
+
+        post_id = str(
+            post.get("id")
+        )
+
+        if not post_id:
+
+            print(
+                "⚠️ X post has no ID."
+            )
+
+            return False
+
+        # -----------------------------------------
+        # PREVENT DUPLICATES
+        # -----------------------------------------
+
+        async with aiosqlite.connect(DB_PATH) as db:
+
+            cursor = await db.execute(
+                """
+                SELECT 1
+                FROM x_notifications
+                WHERE post_id = ?
+                LIMIT 1
+                """,
+                (post_id,)
+            )
+
+            existing = await cursor.fetchone()
+
+        if existing:
+
+            return False
+
+        # -----------------------------------------
+        # POST INFORMATION
+        # -----------------------------------------
+
+        text = (
+            post.get("text")
+            or "WildLines posted something new!"
+        )
+
+        post_url = (
+            post.get("url")
+            or f"https://x.com/WildLinesX/status/{post_id}"
+        )
+
+        published = post.get(
+            "created_at"
+        )
+
+        # -----------------------------------------
+        # DISCORD CHANNEL
+        # -----------------------------------------
+
+        channel = bot.get_channel(
+            YOUTUBE_DISCORD_CHANNEL_ID
+        )
+
+        if channel is None:
+
+            print(
+                "❌ X Discord channel not found."
+            )
+
+            return False
+
+        # -----------------------------------------
+        # CREATE EMBED
+        # -----------------------------------------
+
+        embed = discord.Embed(
+            title="🐦 NEW WILDLINES X POST",
+            description=text,
+            url=post_url,
+            color=discord.Color.blue()
+        )
+
+        embed.set_author(
+            name="WildLines"
+        )
+
+        # -----------------------------------------
+        # MEDIA THUMBNAIL
+        # -----------------------------------------
+
+        thumbnail_url = None
+
+        media = post.get(
+            "media"
+        )
+
+        if isinstance(media, dict):
+
+            all_media = media.get(
+                "all",
+                []
+            )
+
+            if all_media:
+
+                thumbnail_url = (
+                    all_media[0].get(
+                        "thumbnail_url"
+                    )
+                )
+
+        # -----------------------------------------
+        # FALLBACK: VIDEOS
+        # -----------------------------------------
+
+        if not thumbnail_url:
+
+            videos = post.get(
+                "videos",
+                []
+            )
+
+            if videos:
+
+                thumbnail_url = (
+                    videos[0].get(
+                        "thumbnail_url"
+                    )
+                )
+
+        # -----------------------------------------
+        # FALLBACK: IMAGES
+        # -----------------------------------------
+
+        if not thumbnail_url:
+
+            images = post.get(
+                "images",
+                []
+            )
+
+            if images:
+
+                thumbnail_url = (
+                    images[0].get(
+                        "url"
+                    )
+                )
+
+        if thumbnail_url:
+
+            embed.set_image(
+                url=thumbnail_url
+            )
+
+        # -----------------------------------------
+        # VIEW ON X
+        # -----------------------------------------
+
+        embed.add_field(
+            name="🔗 View on X",
+            value=(
+                f"[Open X Post]({post_url})"
+            ),
+            inline=False
+        )
+
+        # -----------------------------------------
+        # PUBLISHED TIME
+        # -----------------------------------------
+
+        if published:
+
+            try:
+
+                published_dt = datetime.strptime(
+                    published,
+                    "%a %b %d %H:%M:%S %z %Y"
+                )
+
+                timestamp = int(
+                    published_dt.timestamp()
+                )
+
+                embed.add_field(
+                    name="📅 Published",
+                    value=(
+                        f"<t:{timestamp}:F>\n"
+                        f"(<t:{timestamp}:R>)"
+                    ),
+                    inline=False
+                )
+
+            except Exception as e:
+
+                print(
+                    f"⚠️ X date parsing error: {e}"
+                )
+
+        # -----------------------------------------
+        # FOOTER
+        # -----------------------------------------
+
+        embed.set_footer(
+            text="WildLines • X"
+        )
+
+        # -----------------------------------------
+        # SEND DISCORD MESSAGE
+        # -----------------------------------------
+
+        await channel.send(
+            embed=embed
+        )
+
+        # -----------------------------------------
+        # SAVE TO SQLITE
+        # -----------------------------------------
+
+        async with aiosqlite.connect(DB_PATH) as db:
+
+            await db.execute(
+                """
+                INSERT OR IGNORE INTO x_notifications
+                (
+                    post_id,
+                    post_text,
+                    post_url,
+                    published_at
+                )
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    post_id,
+                    text,
+                    post_url,
+                    published
+                )
+            )
+
+            await db.commit()
+
+        print(
+            f"🐦 X notification sent: {post_id}"
+        )
+
+        return True
+
+    except Exception as e:
+
+        print(
+            f"❌ X notification send error: {e}"
+        )
+
+        return False
 
 async def send_x_notification(post):
 
