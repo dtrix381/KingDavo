@@ -10674,6 +10674,606 @@ async def youtube_notification_task():
             f"❌ YouTube notification error: {e}"
         )
 
+@bot.tree.command(
+    name="wildlines_profile",
+    description="View a member's WildLines prize profile"
+)
+@app_commands.describe(
+    member="The Discord member whose prize profile you want to view"
+)
+async def wildlines_profile(
+    interaction: discord.Interaction,
+    member: discord.Member
+):
+
+    await interaction.response.defer()
+
+    try:
+
+        async with aiosqlite.connect(DB_PATH) as db:
+
+            # -----------------------------------------
+            # TOTALS
+            # -----------------------------------------
+
+            cursor = await db.execute(
+                """
+                SELECT
+                    COALESCE(SUM(CASE
+                        WHEN LOWER(prize_type) = 'free spins'
+                        THEN prize_value ELSE 0 END), 0),
+
+                    COALESCE(SUM(CASE
+                        WHEN LOWER(prize_type) = 'twitter giveaway'
+                        THEN prize_value ELSE 0 END), 0),
+
+                    COALESCE(SUM(CASE
+                        WHEN LOWER(prize_type) = 'guess balance'
+                        THEN prize_value ELSE 0 END), 0),
+
+                    COALESCE(SUM(CASE
+                        WHEN LOWER(prize_type) = 'tournament'
+                        THEN prize_value ELSE 0 END), 0),
+
+                    COALESCE(SUM(CASE
+                        WHEN LOWER(prize_type) = 'raffle'
+                        THEN prize_value ELSE 0 END), 0),
+
+                    COALESCE(SUM(CASE
+                        WHEN LOWER(prize_type) = 'plinko prize'
+                        THEN prize_value ELSE 0 END), 0),
+
+                    COALESCE(SUM(CASE
+                        WHEN LOWER(prize_type) = 'plinko wild points'
+                        THEN wild_points ELSE 0 END), 0),
+
+                    COALESCE(SUM(CASE
+                        WHEN LOWER(prize_type) = 'top chatter'
+                        THEN prize_value ELSE 0 END), 0),
+
+                    COALESCE(SUM(CASE
+                        WHEN LOWER(prize_type) = 'bonus buy'
+                        THEN prize_value ELSE 0 END), 0),
+
+                    COALESCE(SUM(prize_value), 0)
+
+                FROM prize_awards
+                WHERE winner_id = ?
+                  AND status = 'sent'
+                """,
+                (member.id,)
+            )
+
+            totals = await cursor.fetchone()
+
+            # -----------------------------------------
+            # PRIZE HISTORY
+            # -----------------------------------------
+
+            cursor = await db.execute(
+                """
+                SELECT
+                    prize_type,
+                    slot_name,
+                    quantity,
+                    bet_size,
+                    prize_value,
+                    wild_points,
+                    created_at,
+                    approved_at
+                FROM prize_awards
+                WHERE winner_id = ?
+                  AND status = 'sent'
+                ORDER BY
+                    COALESCE(approved_at, created_at) DESC
+                """,
+                (member.id,)
+            )
+
+            history = await cursor.fetchall()
+
+        (
+            free_spins,
+            twitter_giveaway,
+            guess_balance,
+            tournament,
+            raffle,
+            plinko_prize,
+            plinko_wild_points,
+            top_chatter,
+            bonus_buy,
+            total_prize_value
+        ) = totals
+
+        # -----------------------------------------
+        # EMBED
+        # -----------------------------------------
+
+        embed = discord.Embed(
+            title="🏆 WILDLINES PROFILE",
+            description=(
+                f"Prize profile for {member.mention}"
+            ),
+            color=discord.Color.gold()
+        )
+
+        if member.display_avatar:
+            embed.set_thumbnail(
+                url=member.display_avatar.url
+            )
+
+        embed.add_field(
+            name="💰 TOTAL EARNED",
+            value=f"**${total_prize_value:,.2f}**",
+            inline=False
+        )
+
+        embed.add_field(
+            name="🎰 Free Spins",
+            value=f"${free_spins:,.2f}",
+            inline=True
+        )
+
+        embed.add_field(
+            name="🐦 Twitter Giveaway",
+            value=f"${twitter_giveaway:,.2f}",
+            inline=True
+        )
+
+        embed.add_field(
+            name="🎯 Guess Balance",
+            value=f"${guess_balance:,.2f}",
+            inline=True
+        )
+
+        embed.add_field(
+            name="🏆 Tournament",
+            value=f"${tournament:,.2f}",
+            inline=True
+        )
+
+        embed.add_field(
+            name="🎟️ Raffle",
+            value=f"${raffle:,.2f}",
+            inline=True
+        )
+
+        embed.add_field(
+            name="🎰 Plinko Prize",
+            value=f"${plinko_prize:,.2f}",
+            inline=True
+        )
+
+        embed.add_field(
+            name="👑 Plinko Wild Points",
+            value=f"{plinko_wild_points:,} pts",
+            inline=True
+        )
+
+        embed.add_field(
+            name="💬 Top Chatter",
+            value=f"${top_chatter:,.2f}",
+            inline=True
+        )
+
+        embed.add_field(
+            name="🎁 Bonus Buy",
+            value=f"${bonus_buy:,.2f}",
+            inline=True
+        )
+
+        # -----------------------------------------
+        # HISTORY
+        # -----------------------------------------
+
+        if history:
+
+            history_lines = []
+
+            for row in history[:10]:
+
+                (
+                    prize_type,
+                    slot_name,
+                    quantity,
+                    bet_size,
+                    prize_value,
+                    wild_points,
+                    created_at,
+                    approved_at
+                ) = row
+
+                date_value = approved_at or created_at
+
+                if date_value:
+
+                    try:
+
+                        dt = datetime.fromisoformat(
+                            date_value.replace("Z", "+00:00")
+                        )
+
+                        timestamp = int(
+                            dt.timestamp()
+                        )
+
+                        date_text = (
+                            f"<t:{timestamp}:d>"
+                        )
+
+                    except Exception:
+
+                        date_text = str(
+                            date_value
+                        )[:10]
+
+                else:
+
+                    date_text = "Unknown date"
+
+                # Build prize description
+
+                details = ""
+
+                if prize_type.lower() == "plinko wild points":
+
+                    details = (
+                        f"{wild_points or 0:,} Wild Points"
+                    )
+
+                else:
+
+                    if prize_value is not None:
+
+                        details = (
+                            f"${prize_value:,.2f}"
+                        )
+
+                    if slot_name:
+
+                        details += (
+                            f" • {slot_name}"
+                        )
+
+                    if quantity:
+
+                        details += (
+                            f" • {quantity:g}x"
+                            if isinstance(quantity, float)
+                            else f" • {quantity}x"
+                        )
+
+                    if bet_size:
+
+                        details += (
+                            f" • ${bet_size:.2f} bet"
+                        )
+
+                history_lines.append(
+                    f"• **{prize_type}** — "
+                    f"{details}\n"
+                    f"  📅 {date_text}"
+                )
+
+            history_text = "\n\n".join(
+                history_lines
+            )
+
+            if len(history) > 10:
+
+                history_text += (
+                    f"\n\n*Showing latest 10 "
+                    f"of {len(history)} prizes.*"
+                )
+
+            embed.add_field(
+                name="📜 PRIZE HISTORY",
+                value=history_text,
+                inline=False
+            )
+
+        else:
+
+            embed.add_field(
+                name="📜 PRIZE HISTORY",
+                value="No prizes earned yet.",
+                inline=False
+            )
+
+        embed.set_footer(
+            text="WildLines • Prize Profile"
+        )
+
+        await interaction.followup.send(
+            embed=embed
+        )
+
+    except Exception as e:
+
+        print(
+            f"❌ WildLines profile error: {e}"
+        )
+
+        await interaction.followup.send(
+            "❌ Failed to load the WildLines profile.",
+            ephemeral=True
+        )
+
+@bot.tree.command(
+    name="wildlines_monthly",
+    description="View WildLines prizes given during the current month"
+)
+async def wildlines_monthly(
+    interaction: discord.Interaction
+):
+
+    await interaction.response.defer()
+
+    try:
+
+        now = datetime.now()
+
+        current_month = now.month
+        current_year = now.year
+
+        month_name = now.strftime("%B")
+
+        async with aiosqlite.connect(DB_PATH) as db:
+
+            cursor = await db.execute(
+                """
+                SELECT
+
+                    -- FREE SPINS
+                    COALESCE(SUM(
+                        CASE
+                            WHEN LOWER(TRIM(prize_type)) = 'free spins'
+                            THEN COALESCE(prize_value, 0)
+                            ELSE 0
+                        END
+                    ), 0),
+
+                    -- TWITTER GIVEAWAY
+                    COALESCE(SUM(
+                        CASE
+                            WHEN LOWER(TRIM(prize_type)) = 'twitter giveaway'
+                            THEN COALESCE(prize_value, 0)
+                            ELSE 0
+                        END
+                    ), 0),
+
+                    -- GUESS BALANCE
+                    COALESCE(SUM(
+                        CASE
+                            WHEN LOWER(TRIM(prize_type)) = 'guess balance'
+                            THEN COALESCE(prize_value, 0)
+                            ELSE 0
+                        END
+                    ), 0),
+
+                    -- TOURNAMENT
+                    COALESCE(SUM(
+                        CASE
+                            WHEN LOWER(TRIM(prize_type)) = 'tournament'
+                            THEN COALESCE(prize_value, 0)
+                            ELSE 0
+                        END
+                    ), 0),
+
+                    -- RAFFLE
+                    COALESCE(SUM(
+                        CASE
+                            WHEN LOWER(TRIM(prize_type)) = 'raffle'
+                            THEN COALESCE(prize_value, 0)
+                            ELSE 0
+                        END
+                    ), 0),
+
+                    -- PLINKO PRIZE
+                    COALESCE(SUM(
+                        CASE
+                            WHEN LOWER(TRIM(prize_type)) = 'plinko prize'
+                            THEN COALESCE(prize_value, 0)
+                            ELSE 0
+                        END
+                    ), 0),
+
+                    -- PLINKO WILD POINTS
+                    COALESCE(SUM(
+                        CASE
+                            WHEN LOWER(TRIM(prize_type)) = 'plinko wild points'
+                            THEN COALESCE(wild_points, 0)
+                            ELSE 0
+                        END
+                    ), 0),
+
+                    -- TOP CHATTER
+                    COALESCE(SUM(
+                        CASE
+                            WHEN LOWER(TRIM(prize_type)) = 'top chatter'
+                            THEN COALESCE(prize_value, 0)
+                            ELSE 0
+                        END
+                    ), 0),
+
+                    -- BONUS BUY
+                    COALESCE(SUM(
+                        CASE
+                            WHEN LOWER(TRIM(prize_type)) = 'bonus buy'
+                            THEN COALESCE(prize_value, 0)
+                            ELSE 0
+                        END
+                    ), 0),
+
+                    -- TOTAL OF DISPLAYED CASH PRIZES ONLY
+                    COALESCE(SUM(
+                        CASE
+                            WHEN LOWER(TRIM(prize_type)) IN (
+                                'free spins',
+                                'twitter giveaway',
+                                'guess balance',
+                                'tournament',
+                                'raffle',
+                                'plinko prize',
+                                'top chatter',
+                                'bonus buy'
+                            )
+                            THEN COALESCE(prize_value, 0)
+                            ELSE 0
+                        END
+                    ), 0),
+
+                    -- UNIQUE WINNERS
+                    COUNT(DISTINCT winner_id)
+
+                FROM prize_awards
+
+                WHERE status = 'sent'
+                  AND month = ?
+                  AND year = ?
+                """,
+                (
+                    current_month,
+                    current_year
+                )
+            )
+
+            totals = await cursor.fetchone()
+
+        (
+            free_spins,
+            twitter_giveaway,
+            guess_balance,
+            tournament,
+            raffle,
+            plinko_prize,
+            plinko_wild_points,
+            top_chatter,
+            bonus_buy,
+            total_prize_value,
+            unique_winners
+        ) = totals
+
+        # -----------------------------------------
+        # EMBED
+        # -----------------------------------------
+
+        embed = discord.Embed(
+            title="🏆 WILDLINES MONTHLY PRIZES",
+            description=(
+                f"### {month_name} {current_year}\n\n"
+                "Total prizes given to all members "
+                "during this month."
+            ),
+            color=discord.Color.gold()
+        )
+
+        # -----------------------------------------
+        # PRIZE BREAKDOWN
+        # -----------------------------------------
+
+        embed.add_field(
+            name="🎰 Free Spins",
+            value=f"${free_spins:,.2f}",
+            inline=True
+        )
+
+        embed.add_field(
+            name="🐦 Twitter Giveaway",
+            value=f"${twitter_giveaway:,.2f}",
+            inline=True
+        )
+
+        embed.add_field(
+            name="🎯 Guess Balance",
+            value=f"${guess_balance:,.2f}",
+            inline=True
+        )
+
+        embed.add_field(
+            name="🏆 Tournament",
+            value=f"${tournament:,.2f}",
+            inline=True
+        )
+
+        embed.add_field(
+            name="🎟️ Raffle",
+            value=f"${raffle:,.2f}",
+            inline=True
+        )
+
+        embed.add_field(
+            name="🎰 Plinko Prize",
+            value=f"${plinko_prize:,.2f}",
+            inline=True
+        )
+
+        embed.add_field(
+            name="👑 Plinko Wild Points",
+            value=f"{plinko_wild_points:,} pts",
+            inline=True
+        )
+
+        embed.add_field(
+            name="💬 Top Chatter",
+            value=f"${top_chatter:,.2f}",
+            inline=True
+        )
+
+        embed.add_field(
+            name="🎁 Bonus Buy",
+            value=f"${bonus_buy:,.2f}",
+            inline=True
+        )
+
+        # -----------------------------------------
+        # UNIQUE WINNERS
+        # -----------------------------------------
+
+        embed.add_field(
+            name="👥 UNIQUE WINNERS",
+            value=f"**{unique_winners:,}**",
+            inline=True
+        )
+
+        # -----------------------------------------
+        # TOTAL
+        # -----------------------------------------
+
+        embed.add_field(
+            name="💰 TOTAL PRIZE VALUE",
+            value=f"**${total_prize_value:,.2f}**",
+            inline=False
+        )
+
+        embed.set_footer(
+            text="WildLines • Monthly Prize Report"
+        )
+
+        await interaction.followup.send(
+            embed=embed
+        )
+
+    except Exception as e:
+
+        print(
+            f"❌ WildLines monthly error: {e}"
+        )
+
+        if interaction.response.is_done():
+
+            await interaction.followup.send(
+                "❌ Failed to load the monthly WildLines report.",
+                ephemeral=True
+            )
+
+        else:
+
+            await interaction.response.send_message(
+                "❌ Failed to load the monthly WildLines report.",
+                ephemeral=True
+            )
+
 
 if __name__ == "__main__":
     bot.run(TOKEN)
