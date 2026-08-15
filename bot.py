@@ -10393,7 +10393,7 @@ async def treasure_hunt(
     )
 
 
-@tasks.loop(minutes=5)
+@tasks.loop(minutes=15)
 async def youtube_notification_task():
 
     feed_url = (
@@ -10683,7 +10683,7 @@ async def youtube_notification_task():
             f"❌ YouTube notification error: {e}"
         )
 
-@tasks.loop(minutes=5)
+@tasks.loop(minutes=15)
 async def x_notification_task():
 
     username = "WildLinesX"
