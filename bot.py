@@ -10692,9 +10692,9 @@ async def wildlines_profile(
 
         async with aiosqlite.connect(DB_PATH) as db:
 
-            # -----------------------------------------
+            # =========================================
             # TOTALS
-            # -----------------------------------------
+            # =========================================
 
             cursor = await db.execute(
                 """
@@ -10750,22 +10750,22 @@ async def wildlines_profile(
                         END
                     ), 0),
 
-                    -- PLINKO PRIZE
-                    -- Only count Plinko as a cash prize when it has
-                    -- a prize value and no Wild Points.
+                    -- PLINKO CASH PRIZE
                     COALESCE(SUM(
                         CASE
                             WHEN LOWER(REPLACE(TRIM(prize_type), ' ', '_'))
-                                IN ('plinko', 'plinko_prize', 'plinko_prize_value')
-                             AND COALESCE(wild_points, 0) = 0
+                                IN (
+                                    'plinko',
+                                    'plinko_prize',
+                                    'plinko_prize_value'
+                                )
+                            AND COALESCE(wild_points, 0) = 0
                             THEN COALESCE(prize_value, 0)
                             ELSE 0
                         END
                     ), 0),
 
                     -- PLINKO WILD POINTS
-                    -- Your database appears to use "Plinko" for this,
-                    -- so use the wild_points column to identify it.
                     COALESCE(SUM(
                         CASE
                             WHEN LOWER(REPLACE(TRIM(prize_type), ' ', '_'))
@@ -10774,7 +10774,7 @@ async def wildlines_profile(
                                     'plinko_wild_points',
                                     'plinko_wild_point'
                                 )
-                             AND COALESCE(wild_points, 0) > 0
+                            AND COALESCE(wild_points, 0) > 0
                             THEN COALESCE(wild_points, 0)
                             ELSE 0
                         END
@@ -10784,7 +10784,10 @@ async def wildlines_profile(
                     COALESCE(SUM(
                         CASE
                             WHEN LOWER(REPLACE(TRIM(prize_type), ' ', '_'))
-                                IN ('top_chatter', 'top_chatter_prize')
+                                IN (
+                                    'top_chatter',
+                                    'top_chatter_prize'
+                                )
                             THEN COALESCE(prize_value, 0)
                             ELSE 0
                         END
@@ -10794,7 +10797,10 @@ async def wildlines_profile(
                     COALESCE(SUM(
                         CASE
                             WHEN LOWER(REPLACE(TRIM(prize_type), ' ', '_'))
-                                IN ('bonus_buy', 'bonus_buy_prize')
+                                IN (
+                                    'bonus_buy',
+                                    'bonus_buy_prize'
+                                )
                             THEN COALESCE(prize_value, 0)
                             ELSE 0
                         END
@@ -10803,6 +10809,7 @@ async def wildlines_profile(
                     -- TOTAL CASH PRIZES
                     COALESCE(SUM(
                         CASE
+
                             WHEN LOWER(REPLACE(TRIM(prize_type), ' ', '_'))
                                 IN (
                                     'free_spins',
@@ -10826,10 +10833,11 @@ async def wildlines_profile(
                                     'plinko_prize',
                                     'plinko_prize_value'
                                 )
-                             AND COALESCE(wild_points, 0) = 0
+                            AND COALESCE(wild_points, 0) = 0
                             THEN COALESCE(prize_value, 0)
 
                             ELSE 0
+
                         END
                     ), 0)
 
@@ -10843,9 +10851,9 @@ async def wildlines_profile(
 
             totals = await cursor.fetchone()
 
-            # -----------------------------------------
+            # =========================================
             # PRIZE HISTORY
-            # -----------------------------------------
+            # =========================================
 
             cursor = await db.execute(
                 """
@@ -10869,6 +10877,10 @@ async def wildlines_profile(
 
             history = await cursor.fetchall()
 
+        # =========================================
+        # UNPACK TOTALS
+        # =========================================
+
         (
             free_spins,
             twitter_giveaway,
@@ -10882,9 +10894,9 @@ async def wildlines_profile(
             total_prize_value
         ) = totals
 
-        # -----------------------------------------
+        # =========================================
         # EMBED
-        # -----------------------------------------
+        # =========================================
 
         embed = discord.Embed(
             title="🏆 WILDLINES PROFILE",
@@ -10895,15 +10907,24 @@ async def wildlines_profile(
         )
 
         if member.display_avatar:
+
             embed.set_thumbnail(
                 url=member.display_avatar.url
             )
+
+        # =========================================
+        # TOTAL EARNED
+        # =========================================
 
         embed.add_field(
             name="💰 TOTAL EARNED",
             value=f"**${total_prize_value:,.2f}**",
             inline=False
         )
+
+        # =========================================
+        # PRIZE TOTALS
+        # =========================================
 
         embed.add_field(
             name="🎰 Free Spins",
@@ -10959,9 +10980,9 @@ async def wildlines_profile(
             inline=True
         )
 
-        # -----------------------------------------
-        # HISTORY
-        # -----------------------------------------
+        # =========================================
+        # PRIZE HISTORY
+        # =========================================
 
         if history:
 
@@ -10980,6 +11001,10 @@ async def wildlines_profile(
                     approved_at
                 ) = row
 
+                # -----------------------------------------
+                # DATE
+                # -----------------------------------------
+
                 date_value = approved_at or created_at
 
                 if date_value:
@@ -10987,7 +11012,10 @@ async def wildlines_profile(
                     try:
 
                         dt = datetime.fromisoformat(
-                            date_value.replace("Z", "+00:00")
+                            date_value.replace(
+                                "Z",
+                                "+00:00"
+                            )
                         )
 
                         timestamp = int(
@@ -11008,15 +11036,37 @@ async def wildlines_profile(
 
                     date_text = "Unknown date"
 
-                # Build prize description
+                # -----------------------------------------
+                # NORMALIZE PRIZE TYPE
+                # -----------------------------------------
 
-                details = ""
+                normalized_type = (
+                    str(prize_type)
+                    .strip()
+                    .lower()
+                    .replace(" ", "_")
+                )
 
-                if prize_type.lower() == "plinko wild points":
+                # -----------------------------------------
+                # PLINKO WILD POINTS
+                # -----------------------------------------
+
+                if (
+                    normalized_type in (
+                        "plinko",
+                        "plinko_wild_points",
+                        "plinko_wild_point"
+                    )
+                    and (wild_points or 0) > 0
+                ):
 
                     details = (
-                        f"{wild_points or 0:,} Wild Points"
+                        f"{wild_points:,} Wild Points"
                     )
+
+                # -----------------------------------------
+                # NORMAL CASH PRIZE
+                # -----------------------------------------
 
                 else:
 
@@ -11026,25 +11076,45 @@ async def wildlines_profile(
                             f"${prize_value:,.2f}"
                         )
 
+                    else:
+
+                        details = ""
+
+                    # Slot
                     if slot_name:
 
                         details += (
                             f" • {slot_name}"
                         )
 
+                    # Quantity
                     if quantity:
 
-                        details += (
-                            f" • {quantity:g}x"
-                            if isinstance(quantity, float)
-                            else f" • {quantity}x"
-                        )
+                        if isinstance(
+                            quantity,
+                            float
+                        ):
 
+                            details += (
+                                f" • {quantity:g}x"
+                            )
+
+                        else:
+
+                            details += (
+                                f" • {quantity}x"
+                            )
+
+                    # Bet size
                     if bet_size:
 
                         details += (
                             f" • ${bet_size:.2f} bet"
                         )
+
+                # -----------------------------------------
+                # HISTORY LINE
+                # -----------------------------------------
 
                 history_lines.append(
                     f"• **{prize_type}** — "
@@ -11077,9 +11147,17 @@ async def wildlines_profile(
                 inline=False
             )
 
+        # =========================================
+        # FOOTER
+        # =========================================
+
         embed.set_footer(
             text="WildLines • Prize Profile"
         )
+
+        # =========================================
+        # SEND
+        # =========================================
 
         await interaction.followup.send(
             embed=embed
