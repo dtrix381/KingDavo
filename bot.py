@@ -10699,45 +10699,108 @@ async def wildlines_profile(
             cursor = await db.execute(
                 """
                 SELECT
-                    COALESCE(SUM(CASE
-                        WHEN LOWER(prize_type) = 'free spins'
-                        THEN prize_value ELSE 0 END), 0),
 
-                    COALESCE(SUM(CASE
-                        WHEN LOWER(prize_type) = 'twitter giveaway'
-                        THEN prize_value ELSE 0 END), 0),
+                    -- FREE SPINS
+                    COALESCE(SUM(
+                        CASE
+                            WHEN LOWER(TRIM(prize_type)) = 'free_spins'
+                            THEN COALESCE(prize_value, 0)
+                            ELSE 0
+                        END
+                    ), 0),
 
-                    COALESCE(SUM(CASE
-                        WHEN LOWER(prize_type) = 'guess balance'
-                        THEN prize_value ELSE 0 END), 0),
+                    -- TWITTER GIVEAWAY
+                    COALESCE(SUM(
+                        CASE
+                            WHEN LOWER(TRIM(prize_type)) = 'twitter_giveaway'
+                            THEN COALESCE(prize_value, 0)
+                            ELSE 0
+                        END
+                    ), 0),
 
-                    COALESCE(SUM(CASE
-                        WHEN LOWER(prize_type) = 'tournament'
-                        THEN prize_value ELSE 0 END), 0),
+                    -- GUESS BALANCE
+                    COALESCE(SUM(
+                        CASE
+                            WHEN LOWER(TRIM(prize_type)) = 'guess_balance'
+                            THEN COALESCE(prize_value, 0)
+                            ELSE 0
+                        END
+                    ), 0),
 
-                    COALESCE(SUM(CASE
-                        WHEN LOWER(prize_type) = 'raffle'
-                        THEN prize_value ELSE 0 END), 0),
+                    -- TOURNAMENT
+                    COALESCE(SUM(
+                        CASE
+                            WHEN LOWER(TRIM(prize_type)) = 'tournament'
+                            THEN COALESCE(prize_value, 0)
+                            ELSE 0
+                        END
+                    ), 0),
 
-                    COALESCE(SUM(CASE
-                        WHEN LOWER(prize_type) = 'plinko prize'
-                        THEN prize_value ELSE 0 END), 0),
+                    -- RAFFLE
+                    COALESCE(SUM(
+                        CASE
+                            WHEN LOWER(TRIM(prize_type)) = 'raffle'
+                            THEN COALESCE(prize_value, 0)
+                            ELSE 0
+                        END
+                    ), 0),
 
-                    COALESCE(SUM(CASE
-                        WHEN LOWER(prize_type) = 'plinko wild points'
-                        THEN wild_points ELSE 0 END), 0),
+                    -- PLINKO PRIZE
+                    COALESCE(SUM(
+                        CASE
+                            WHEN LOWER(TRIM(prize_type)) = 'plinko_prize'
+                            THEN COALESCE(prize_value, 0)
+                            ELSE 0
+                        END
+                    ), 0),
 
-                    COALESCE(SUM(CASE
-                        WHEN LOWER(prize_type) = 'top chatter'
-                        THEN prize_value ELSE 0 END), 0),
+                    -- PLINKO WILD POINTS
+                    COALESCE(SUM(
+                        CASE
+                            WHEN LOWER(TRIM(prize_type)) = 'plinko_wild_points'
+                            THEN COALESCE(wild_points, 0)
+                            ELSE 0
+                        END
+                    ), 0),
 
-                    COALESCE(SUM(CASE
-                        WHEN LOWER(prize_type) = 'bonus buy'
-                        THEN prize_value ELSE 0 END), 0),
+                    -- TOP CHATTER
+                    COALESCE(SUM(
+                        CASE
+                            WHEN LOWER(TRIM(prize_type)) = 'top_chatter'
+                            THEN COALESCE(prize_value, 0)
+                            ELSE 0
+                        END
+                    ), 0),
 
-                    COALESCE(SUM(prize_value), 0)
+                    -- BONUS BUY
+                    COALESCE(SUM(
+                        CASE
+                            WHEN LOWER(TRIM(prize_type)) = 'bonus_buy'
+                            THEN COALESCE(prize_value, 0)
+                            ELSE 0
+                        END
+                    ), 0),
+
+                    -- TOTAL CASH PRIZE VALUE
+                    COALESCE(SUM(
+                        CASE
+                            WHEN LOWER(TRIM(prize_type)) IN (
+                                'free_spins',
+                                'twitter_giveaway',
+                                'guess_balance',
+                                'tournament',
+                                'raffle',
+                                'plinko_prize',
+                                'top_chatter',
+                                'bonus_buy'
+                            )
+                            THEN COALESCE(prize_value, 0)
+                            ELSE 0
+                        END
+                    ), 0)
 
                 FROM prize_awards
+
                 WHERE winner_id = ?
                   AND status = 'sent'
                 """,
@@ -11024,106 +11087,75 @@ async def wildlines_monthly(
                 """
                 SELECT
 
-                    -- FREE SPINS
-                    COALESCE(SUM(
-                        CASE
-                            WHEN LOWER(TRIM(prize_type)) = 'free spins'
-                            THEN COALESCE(prize_value, 0)
-                            ELSE 0
-                        END
-                    ), 0),
+                    COALESCE(SUM(CASE
+                        WHEN LOWER(TRIM(prize_type)) = 'free_spins'
+                        THEN COALESCE(prize_value, 0)
+                        ELSE 0
+                    END), 0),
 
-                    -- TWITTER GIVEAWAY
-                    COALESCE(SUM(
-                        CASE
-                            WHEN LOWER(TRIM(prize_type)) = 'twitter giveaway'
-                            THEN COALESCE(prize_value, 0)
-                            ELSE 0
-                        END
-                    ), 0),
+                    COALESCE(SUM(CASE
+                        WHEN LOWER(TRIM(prize_type)) = 'twitter_giveaway'
+                        THEN COALESCE(prize_value, 0)
+                        ELSE 0
+                    END), 0),
 
-                    -- GUESS BALANCE
-                    COALESCE(SUM(
-                        CASE
-                            WHEN LOWER(TRIM(prize_type)) = 'guess balance'
-                            THEN COALESCE(prize_value, 0)
-                            ELSE 0
-                        END
-                    ), 0),
+                    COALESCE(SUM(CASE
+                        WHEN LOWER(TRIM(prize_type)) = 'guess_balance'
+                        THEN COALESCE(prize_value, 0)
+                        ELSE 0
+                    END), 0),
 
-                    -- TOURNAMENT
-                    COALESCE(SUM(
-                        CASE
-                            WHEN LOWER(TRIM(prize_type)) = 'tournament'
-                            THEN COALESCE(prize_value, 0)
-                            ELSE 0
-                        END
-                    ), 0),
+                    COALESCE(SUM(CASE
+                        WHEN LOWER(TRIM(prize_type)) = 'tournament'
+                        THEN COALESCE(prize_value, 0)
+                        ELSE 0
+                    END), 0),
 
-                    -- RAFFLE
-                    COALESCE(SUM(
-                        CASE
-                            WHEN LOWER(TRIM(prize_type)) = 'raffle'
-                            THEN COALESCE(prize_value, 0)
-                            ELSE 0
-                        END
-                    ), 0),
+                    COALESCE(SUM(CASE
+                        WHEN LOWER(TRIM(prize_type)) = 'raffle'
+                        THEN COALESCE(prize_value, 0)
+                        ELSE 0
+                    END), 0),
 
-                    -- PLINKO PRIZE
-                    COALESCE(SUM(
-                        CASE
-                            WHEN LOWER(TRIM(prize_type)) = 'plinko prize'
-                            THEN COALESCE(prize_value, 0)
-                            ELSE 0
-                        END
-                    ), 0),
+                    COALESCE(SUM(CASE
+                        WHEN LOWER(TRIM(prize_type)) = 'plinko_prize'
+                        THEN COALESCE(prize_value, 0)
+                        ELSE 0
+                    END), 0),
 
-                    -- PLINKO WILD POINTS
-                    COALESCE(SUM(
-                        CASE
-                            WHEN LOWER(TRIM(prize_type)) = 'plinko wild points'
-                            THEN COALESCE(wild_points, 0)
-                            ELSE 0
-                        END
-                    ), 0),
+                    COALESCE(SUM(CASE
+                        WHEN LOWER(TRIM(prize_type)) = 'plinko_wild_points'
+                        THEN COALESCE(wild_points, 0)
+                        ELSE 0
+                    END), 0),
 
-                    -- TOP CHATTER
-                    COALESCE(SUM(
-                        CASE
-                            WHEN LOWER(TRIM(prize_type)) = 'top chatter'
-                            THEN COALESCE(prize_value, 0)
-                            ELSE 0
-                        END
-                    ), 0),
+                    COALESCE(SUM(CASE
+                        WHEN LOWER(TRIM(prize_type)) = 'top_chatter'
+                        THEN COALESCE(prize_value, 0)
+                        ELSE 0
+                    END), 0),
 
-                    -- BONUS BUY
-                    COALESCE(SUM(
-                        CASE
-                            WHEN LOWER(TRIM(prize_type)) = 'bonus buy'
-                            THEN COALESCE(prize_value, 0)
-                            ELSE 0
-                        END
-                    ), 0),
+                    COALESCE(SUM(CASE
+                        WHEN LOWER(TRIM(prize_type)) = 'bonus_buy'
+                        THEN COALESCE(prize_value, 0)
+                        ELSE 0
+                    END), 0),
 
-                    -- TOTAL OF DISPLAYED CASH PRIZES ONLY
-                    COALESCE(SUM(
-                        CASE
-                            WHEN LOWER(TRIM(prize_type)) IN (
-                                'free spins',
-                                'twitter giveaway',
-                                'guess balance',
-                                'tournament',
-                                'raffle',
-                                'plinko prize',
-                                'top chatter',
-                                'bonus buy'
-                            )
-                            THEN COALESCE(prize_value, 0)
-                            ELSE 0
-                        END
-                    ), 0),
+                    COALESCE(SUM(CASE
+                        WHEN LOWER(TRIM(prize_type)) IN (
+                            'free_spins',
+                            'twitter_giveaway',
+                            'guess_balance',
+                            'tournament',
+                            'raffle',
+                            'plinko_prize',
+                            'top_chatter',
+                            'bonus_buy'
+                        )
+                        THEN COALESCE(prize_value, 0)
+                        ELSE 0
+                    END), 0),
 
-                    -- UNIQUE WINNERS
                     COUNT(DISTINCT winner_id)
 
                 FROM prize_awards
