@@ -6884,11 +6884,13 @@ class PrizeApprovalView(discord.ui.View):
         custom_id="prize_approval_sent"
     )
     async def prizes_sent(
-            self,
-            interaction: discord.Interaction,
-            button: discord.ui.Button
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
     ):
+
         if interaction.user.id != PRIZE_APPROVER_ID:
+
             await interaction.response.send_message(
                 "❌ Only the authorized prize approver can approve this prize.",
                 ephemeral=True
@@ -6896,7 +6898,10 @@ class PrizeApprovalView(discord.ui.View):
 
             return
 
-        await approve_prize(interaction)
+        await approve_prize(
+            interaction,
+            interaction.message.id
+        )
 
     @discord.ui.button(
         label="Prizes Denied",
@@ -6905,12 +6910,13 @@ class PrizeApprovalView(discord.ui.View):
         custom_id="prize_approval_denied"
     )
     async def prizes_denied(
-            self,
-            interaction: discord.Interaction,
-            button: discord.ui.Button
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
     ):
 
         if interaction.user.id != PRIZE_APPROVER_ID:
+
             await interaction.response.send_message(
                 "❌ Only the authorized prize approver can deny this prize.",
                 ephemeral=True
@@ -6918,7 +6924,10 @@ class PrizeApprovalView(discord.ui.View):
 
             return
 
-        await deny_prize(interaction)
+        await deny_prize(
+            interaction,
+            interaction.message.id
+        )
 
 
 async def get_pending_prize_by_message(
