@@ -1582,20 +1582,45 @@ async def rumble_start(interaction: discord.Interaction, provider: app_commands.
     else:
         await interaction.channel.send("❌ Everyone's beeasync def save_game_statsn wiped out... no winner this time!")
 
-@rumble_start.error
-async def admin_check_error(interaction: discord.Interaction, error):
-    if isinstance(error, app_commands.errors.MissingPermissions):
-        await interaction.response.send_message("❌ You must be an admin to use this command.", ephemeral=True)
+# =========================================================
+# LEADERBOARD HOST PERMISSION
+# =========================================================
 
+async def require_leaderboard_host(
+    interaction: discord.Interaction
+):
+
+    # Administrators are always allowed
+    if interaction.user.guild_permissions.administrator:
+        return True
+
+    # Check if the user is one of the Rumble Hosts
+    if interaction.user.id in RUMBLE_HOST_ROLES:
+        return True
+
+    await interaction.response.send_message(
+        "❌ You don't have permission to manage the leaderboard.",
+        ephemeral=True
+    )
+
+    return False
+
+
+# =========================================================
+# START LEADERBOARD
+# =========================================================
 
 @bot.tree.command(
     name="start_leaderboard",
     description="Start a leaderboard event"
 )
-@app_commands.checks.has_permissions(administrator=True)
 async def start_leaderboard(
     interaction: discord.Interaction
 ):
+
+    # -----------------------------------------
+    # CHANNEL CHECK
+    # -----------------------------------------
 
     if not await require_channel(
         interaction,
@@ -1603,10 +1628,27 @@ async def start_leaderboard(
     ):
         return
 
+    # -----------------------------------------
+    # PERMISSION CHECK
+    # -----------------------------------------
+
+    if not await require_leaderboard_host(
+        interaction
+    ):
+        return
+
+    # -----------------------------------------
+    # DATABASE
+    # -----------------------------------------
+
     async with aiosqlite.connect(DB_PATH) as db:
 
         async with db.execute(
-            "SELECT active FROM leaderboard_status WHERE id = 1"
+            """
+            SELECT active
+            FROM leaderboard_status
+            WHERE id = 1
+            """
         ) as cursor:
 
             row = await cursor.fetchone()
@@ -1617,52 +1659,60 @@ async def start_leaderboard(
                     "❌ A leaderboard is already active.",
                     ephemeral=True
                 )
+
                 return
 
+        # -----------------------------------------
+        # RESET CURRENT LEADERBOARD
+        # -----------------------------------------
+
         await db.execute(
-            "DELETE FROM leaderboard_stats"
+            """
+            DELETE FROM leaderboard_stats
+            """
         )
 
-        await db.execute("""
+        # -----------------------------------------
+        # ACTIVATE LEADERBOARD
+        # -----------------------------------------
+
+        await db.execute(
+            """
             UPDATE leaderboard_status
             SET
                 active = 1,
                 started_at = CURRENT_TIMESTAMP
             WHERE id = 1
-        """)
+            """
+        )
 
         await db.commit()
 
+    # -----------------------------------------
+    # CONFIRM
+    # -----------------------------------------
+
     await interaction.response.send_message(
-        "🏆 Leaderboard Event Started!\n"
-        "All rumble stats from now on will count."
+        "🏆 **Leaderboard Event Started!**\n\n"
+        "All Rumble stats from now on will count."
     )
 
-@start_leaderboard.error
-async def start_leaderboard_error(
-    interaction: discord.Interaction,
-    error
-):
 
-    if isinstance(
-        error,
-        app_commands.errors.MissingPermissions
-    ):
-        await interaction.response.send_message(
-            "❌ Admin only.",
-            ephemeral=True
-        )
+# =========================================================
+# END LEADERBOARD
+# =========================================================
 
 @bot.tree.command(
     name="end_leaderboard",
     description="End the current leaderboard"
 )
-@app_commands.checks.has_permissions(
-    administrator=True
-)
 async def end_leaderboard(
     interaction: discord.Interaction
 ):
+
+    # -----------------------------------------
+    # CHANNEL CHECK
+    # -----------------------------------------
 
     if not await require_channel(
         interaction,
@@ -1670,13 +1720,31 @@ async def end_leaderboard(
     ):
         return
 
+    # -----------------------------------------
+    # PERMISSION CHECK
+    # -----------------------------------------
+
+    if not await require_leaderboard_host(
+        interaction
+    ):
+        return
+
+    # -----------------------------------------
+    # CHECK ACTIVE LEADERBOARD
+    # -----------------------------------------
+
     if not await leaderboard_is_active():
 
         await interaction.response.send_message(
             "❌ No active leaderboard.",
             ephemeral=True
         )
+
         return
+
+    # -----------------------------------------
+    # CONFIRMATION VIEW
+    # -----------------------------------------
 
     view = EndLeaderboardView(
         interaction.user.id
@@ -1687,22 +1755,6 @@ async def end_leaderboard(
         view=view,
         ephemeral=True
     )
-
-@end_leaderboard.error
-async def end_leaderboard_error(
-    interaction: discord.Interaction,
-    error
-):
-
-    if isinstance(
-        error,
-        app_commands.errors.MissingPermissions
-    ):
-
-        await interaction.response.send_message(
-            "❌ Admin only.",
-            ephemeral=True
-        )
 
 @bot.tree.command(name="leaderboard", description="View leaderboard rankings")
 async def leaderboard(
@@ -2548,7 +2600,7 @@ async def require_rumble_host(
 
     return False
     
-    
+
 NS = {'s': 'http://www.sitemaps.org/schemas/sitemap/0.9'}
 
 
