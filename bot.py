@@ -96,15 +96,19 @@ TREASURE_HUNT_PRIZE = "$100 CAD"
 treasure_pending_submissions = {}
 
 EXCLUDED_LEADERBOARD_USERS = {
-    878253813553844254,
-    850665803161534484,
-    930627787792998430,
-    766968778512662540,
+    1534722947527348234,  # Streamer
+    1176520509907808388,  # Admin
+    1176520509878440004,  # Mod
 }
 
 RUMBLE_HOST_ROLES = {
-    1176520509907808388,  # Rumble Host
-    1176520509878440004,  # Head Host
+    488015447417946151,  # dtrix
+    850665803161534484,  # ham
+    878253813553844254,  # tee
+}
+
+RUMBLE_JOIN_ROLES = {
+    1222265292747444256,  # Gamdom Verified
 }
 
 DTRIX_ID = 488015447417946151
@@ -486,7 +490,9 @@ async def leaderboard_is_active():
             return bool(row[0]) if row else False
 
 
-async def get_leaderboard_data():
+async def get_leaderboard_data(
+    guild: discord.Guild
+):
 
     active = await leaderboard_is_active()
 
@@ -530,6 +536,16 @@ async def get_leaderboard_data():
             revives
         ) = row
 
+        # -----------------------------------------
+        # EXCLUDE MEMBERS WITH EXCLUDED ROLES
+        # -----------------------------------------
+
+        if is_excluded_from_leaderboard(
+            guild,
+            user_id
+        ):
+            continue
+
         win_percent = (
             (wins / games_played) * 100
             if games_played > 0
@@ -548,13 +564,6 @@ async def get_leaderboard_data():
             "revives": revives,
             "win_percent": win_percent
         })
-
-    # Exclude admins from leaderboard rankings
-    ranked = [
-        player
-        for player in ranked
-        if player["user_id"] not in EXCLUDED_LEADERBOARD_USERS
-    ]
 
     ranked.sort(
         key=lambda x: (
@@ -802,7 +811,9 @@ async def save_leaderboard_stats(
         await db.commit()
 
 
-async def get_leaderboard_winner():
+async def get_leaderboard_winner(
+    guild: discord.Guild
+):
 
     async with aiosqlite.connect(DB_PATH) as db:
 
@@ -841,6 +852,16 @@ async def get_leaderboard_winner():
             revives
         ) = row
 
+        # =========================================
+        # EXCLUDE MEMBERS WITH EXCLUDED ROLES
+        # =========================================
+
+        if is_excluded_from_leaderboard(
+            guild,
+            user_id
+        ):
+            continue
+
         win_percent = (
             (wins / games_played) * 100
             if games_played > 0
@@ -860,27 +881,21 @@ async def get_leaderboard_winner():
             "win_percent": win_percent
         })
 
-    # Exclude admins from winning the leaderboard
-        ranked = [
-            player
-            for player in ranked
-            if player["user_id"] not in EXCLUDED_LEADERBOARD_USERS
-        ]
+    if not ranked:
+        return None
 
-        if not ranked:
-            return None
-
-        ranked.sort(
-            key=lambda x: (
-                -x["wins"],
-                -x["kills"],
-                -x["win_percent"],
-                -x["super_kills"],
-                x["games_played"]
-            )
+    ranked.sort(
+        key=lambda x: (
+            -x["wins"],
+            -x["kills"],
+            -x["win_percent"],
+            -x["super_kills"],
+            x["games_played"]
         )
+    )
 
-        return ranked[0]
+    return ranked[0]
+    
 
 class EndLeaderboardView(discord.ui.View):
 
@@ -914,7 +929,9 @@ class EndLeaderboardView(discord.ui.View):
 
             await db.commit()
 
-        winner = await get_leaderboard_winner()
+        winner = await get_leaderboard_winner(
+            interaction.guild
+        )
 
         if winner is None:
 
@@ -1009,7 +1026,10 @@ class EndLeaderboardView(discord.ui.View):
         )
 
 
-async def get_profile_rank(user_id):
+async def get_profile_rank(
+    guild: discord.Guild,
+    user_id: int
+):
 
     active = await leaderboard_is_active()
 
@@ -1044,14 +1064,23 @@ async def get_profile_rank(user_id):
 
             rows = await cursor.fetchall()
 
-    # Exclude admins from ranking
+    # =========================================
+    # REMOVE MEMBERS WITH EXCLUDED ROLES
+    # =========================================
+
     rows = [
         row
         for row in rows
-        if row[0] not in EXCLUDED_LEADERBOARD_USERS
+        if not is_excluded_from_leaderboard(
+            guild,
+            row[0]
+        )
     ]
 
-    for rank, row in enumerate(rows, start=1):
+    for rank, row in enumerate(
+        rows,
+        start=1
+    ):
 
         if row[0] == user_id:
 
@@ -1110,11 +1139,41 @@ async def send_reminders(channel, join_msg, timer):
         try:
             message = await channel.fetch_message(join_msg.id)
             users = set()
+
             for reaction in message.reactions:
+
                 if str(reaction.emoji) == JOIN_EMOJI:
+
                     async for user in reaction.users():
-                        if not user.bot:
-                            users.add(user)
+
+                        # Ignore bots
+                        if user.bot:
+                            continue
+
+                        # Get the member from this server
+                        member = interaction.guild.get_member(
+                            user.id
+                        )
+
+                        # Ignore users not found in the guild
+                        if member is None:
+                            continue
+
+                        # Get member role IDs
+                        member_role_ids = {
+                            role.id
+                            for role in member.roles
+                        }
+
+                        # Only allow members with the join role
+                        if not (
+                                member_role_ids
+                                & RUMBLE_JOIN_ROLES
+                        ):
+                            continue
+
+                        users.add(member)
+                        
             embed.description += f"\nTotal Joined Players: **{len(users)}**"
         except:
             embed.description += "\n(Unable to count players right now.)"
@@ -1656,7 +1715,9 @@ async def leaderboard(
     ):
         return
 
-    data, active = await get_leaderboard_data()
+    data, active = await get_leaderboard_data(
+        interaction.guild
+    )
 
     if not data:
 
@@ -1701,6 +1762,7 @@ async def profile(
     target = member or interaction.user
 
     rank, active = await get_profile_rank(
+        interaction.guild,
         target.id
     )
 
@@ -1761,8 +1823,11 @@ async def profile(
         else "All-Time Rank"
     )
 
-    if target.id in EXCLUDED_LEADERBOARD_USERS:
-        rank_value = "👑 Admin"
+    if is_excluded_from_leaderboard(
+            interaction.guild,
+            target.id
+    ):
+        rank_value = "🚫 Excluded"
     elif rank:
         rank_value = f"#{rank}"
     else:
@@ -1799,6 +1864,26 @@ async def profile(
         embed=embed
     )
 
+def is_excluded_from_leaderboard(
+    guild: discord.Guild,
+    user_id: int
+):
+
+    member = guild.get_member(user_id)
+
+    if member is None:
+        return False
+
+    member_role_ids = {
+        role.id
+        for role in member.roles
+    }
+
+    return bool(
+        member_role_ids
+        & EXCLUDED_LEADERBOARD_USERS
+    )
+    
 @bot.tree.command(name="slot_board")
 async def aj_booard(interaction: discord.Interaction):
     if str(interaction.user.id) != "488015447417946151":
@@ -2449,14 +2534,11 @@ async def require_channel(interaction, channel_id):
 
     return False
 
-async def require_rumble_host(interaction: discord.Interaction):
+async def require_rumble_host(
+    interaction: discord.Interaction
+):
 
-    if interaction.user.guild_permissions.administrator:
-        return True
-
-    member_roles = {role.id for role in interaction.user.roles}
-
-    if member_roles & RUMBLE_HOST_ROLES:
+    if interaction.user.id in RUMBLE_HOST_ROLES:
         return True
 
     await interaction.response.send_message(
@@ -2465,6 +2547,7 @@ async def require_rumble_host(interaction: discord.Interaction):
     )
 
     return False
+    
     
 NS = {'s': 'http://www.sitemaps.org/schemas/sitemap/0.9'}
 
