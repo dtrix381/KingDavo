@@ -901,13 +901,24 @@ class EndLeaderboardView(discord.ui.View):
 
     def __init__(self, author_id):
         super().__init__(timeout=60)
+
         self.author_id = author_id
 
     async def interaction_check(
         self,
         interaction: discord.Interaction
     ):
-        return interaction.user.id == self.author_id
+
+        if interaction.user.id != self.author_id:
+
+            await interaction.response.send_message(
+                "❌ Only the person who started this action can confirm it.",
+                ephemeral=True
+            )
+
+            return False
+
+        return True
 
     @discord.ui.button(
         label="Confirm",
@@ -919,6 +930,18 @@ class EndLeaderboardView(discord.ui.View):
         button: discord.ui.Button
     ):
 
+        # =========================================
+        # GET WINNER FIRST
+        # =========================================
+
+        winner = await get_leaderboard_winner(
+            interaction.guild
+        )
+
+        # =========================================
+        # END LEADERBOARD
+        # =========================================
+
         async with aiosqlite.connect(DB_PATH) as db:
 
             await db.execute("""
@@ -929,21 +952,33 @@ class EndLeaderboardView(discord.ui.View):
 
             await db.commit()
 
-        winner = await get_leaderboard_winner(
-            interaction.guild
-        )
+        # =========================================
+        # NO ELIGIBLE WINNER
+        # =========================================
 
         if winner is None:
 
             await interaction.response.edit_message(
-                content="✅ Leaderboard ended.\n",
+                content=(
+                    "✅ Leaderboard ended.\n\n"
+                    "❌ There was no eligible winner."
+                ),
                 view=None
             )
+
             return
+
+        # =========================================
+        # GET WINNER MEMBER
+        # =========================================
 
         member = interaction.guild.get_member(
             winner["user_id"]
         )
+
+        # =========================================
+        # CREATE WINNER EMBED
+        # =========================================
 
         embed = discord.Embed(
             title="🏆 LEADERBOARD EVENT ENDED",
@@ -994,21 +1029,43 @@ class EndLeaderboardView(discord.ui.View):
             name="Revives",
             value=str(winner["revives"])
         )
-        
+
+        # =========================================
+        # WINNER AVATAR
+        # =========================================
+
         if member and member.avatar:
+
             embed.set_thumbnail(
                 url=member.avatar.url
             )
+
+        # =========================================
+        # UPDATE CONFIRMATION MESSAGE
+        # =========================================
 
         await interaction.response.edit_message(
             content="✅ Leaderboard ended successfully.",
             view=None
         )
 
-        await interaction.channel.send(
-            content=f"🏆 Congratulations <@{winner['user_id']}>!",
-            embed=embed
+        # =========================================
+        # SEND WINNER TO RUMBLE CHANNEL
+        # =========================================
+
+        rumble_channel = interaction.guild.get_channel(
+            RUMBLE_CHANNEL_ID
         )
+
+        if rumble_channel is not None:
+
+            await rumble_channel.send(
+                content=(
+                    f"🏆 Congratulations "
+                    f"<@{winner['user_id']}>!"
+                ),
+                embed=embed
+            )
 
     @discord.ui.button(
         label="Cancel",
