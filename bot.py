@@ -5074,9 +5074,39 @@ async def wild_tag_giveaway(
 
 class ClearChannelConfirmView(discord.ui.View):
 
-    def __init__(self, keep_messages: int):
+    def __init__(
+        self,
+        keep_messages: int,
+        author_id: int
+    ):
         super().__init__(timeout=60)
+
         self.keep_messages = keep_messages
+        self.author_id = author_id
+
+    # -----------------------------------------
+    # ONLY THE HOST WHO STARTED THE COMMAND
+    # -----------------------------------------
+
+    async def interaction_check(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        if interaction.user.id != self.author_id:
+
+            await interaction.response.send_message(
+                "❌ Only the person who started this command can use these buttons.",
+                ephemeral=True
+            )
+
+            return False
+
+        return True
+
+    # -----------------------------------------
+    # YES - CLEAR
+    # -----------------------------------------
 
     @discord.ui.button(
         label="✅ Yes Clear",
@@ -5087,12 +5117,6 @@ class ClearChannelConfirmView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button
     ):
-
-        if interaction.user.id != DTRIX_ID:
-            return await interaction.response.send_message(
-                "❌ Owner only.",
-                ephemeral=True
-            )
 
         await interaction.response.edit_message(
             content="🧹 Clearing channel...",
@@ -5117,7 +5141,9 @@ class ClearChannelConfirmView(discord.ui.View):
         # KEEP THE FIRST N MESSAGES
         # -----------------------------------------
 
-        messages_to_delete = messages[self.keep_messages:]
+        messages_to_delete = messages[
+            self.keep_messages:
+        ]
 
         if not messages_to_delete:
 
@@ -5135,24 +5161,36 @@ class ClearChannelConfirmView(discord.ui.View):
         deleted_count = 0
 
         # Delete in batches of 100
-        for i in range(0, len(messages_to_delete), 100):
+        for i in range(
+            0,
+            len(messages_to_delete),
+            100
+        ):
 
-            batch = messages_to_delete[i:i + 100]
+            batch = messages_to_delete[
+                i:i + 100
+            ]
 
             try:
 
-                await channel.delete_messages(batch)
+                await channel.delete_messages(
+                    batch
+                )
 
                 deleted_count += len(batch)
 
-            except discord.HTTPException as e:
+            except discord.HTTPException:
 
-                # If bulk delete fails, delete individually
+                # -----------------------------------------
+                # FALLBACK: DELETE INDIVIDUALLY
+                # -----------------------------------------
+
                 for message in batch:
 
                     try:
 
                         await message.delete()
+
                         deleted_count += 1
 
                     except discord.HTTPException:
@@ -5169,6 +5207,10 @@ class ClearChannelConfirmView(discord.ui.View):
             f"📌 Kept: **{self.keep_messages}** message(s) at the top."
         )
 
+    # -----------------------------------------
+    # CANCEL
+    # -----------------------------------------
+
     @discord.ui.button(
         label="❌ Cancel",
         style=discord.ButtonStyle.gray
@@ -5184,6 +5226,10 @@ class ClearChannelConfirmView(discord.ui.View):
             view=None
         )
 
+
+# =========================
+# CLEAR CHANNEL COMMAND
+# =========================
 
 @bot.tree.command(
     name="clear_channel",
@@ -5220,7 +5266,7 @@ async def clear_channel(
         )
 
     # -----------------------------------------
-    # GET CHANNEL MESSAGE COUNT
+    # SHOW CONFIRMATION
     # -----------------------------------------
 
     await interaction.response.send_message(
@@ -5228,9 +5274,13 @@ async def clear_channel(
         f"📌 Messages to keep: **{keep}**\n"
         f"🗑️ Everything after those messages will be deleted.\n\n"
         f"Are you sure?",
-        view=ClearChannelConfirmView(keep),
+        view=ClearChannelConfirmView(
+            keep,
+            interaction.user.id
+        ),
         ephemeral=True
     )
+
 
 
 # ============================================================
