@@ -5198,13 +5198,13 @@ async def clear_channel(
 ):
 
     # -----------------------------------------
-    # OWNER CHECK
+    # RUMBLE HOST CHECK
     # -----------------------------------------
 
-    if interaction.user.id != DTRIX_ID:
+    if interaction.user.id not in RUMBLE_HOST_ROLES:
 
         return await interaction.response.send_message(
-            "❌ Admin only.",
+            "❌ Not Authorized.",
             ephemeral=True
         )
 
