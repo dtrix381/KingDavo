@@ -5919,6 +5919,23 @@ class StreamPrizeView(discord.ui.View):
         super().__init__(timeout=None)
 
     @discord.ui.button(
+        label="Cash Tip",
+        emoji="💵",
+        style=discord.ButtonStyle.success,
+        custom_id="stream_prize_cash_tip"
+    )
+    async def cash_tip(
+            self,
+            interaction: discord.Interaction,
+            button: discord.ui.Button
+    ):
+        await interaction.response.send_message(
+            "💵 **Cash Tip**\n\nSelect the winner below.",
+            view=PrizeMemberSelectView("Cash Tip"),
+            ephemeral=True
+        )
+
+    @discord.ui.button(
         label="Free Spins",
         emoji="🎰",
         style=discord.ButtonStyle.primary,
@@ -6256,6 +6273,14 @@ class PrizeMemberSelectView(discord.ui.View):
                 )
             )
     
+        elif self.prize_type == "Cash Tip":
+
+            await interaction.response.send_modal(
+                CashTipModal(
+                    member.id
+                )
+            )
+
         elif self.prize_type == "Raffle":
 
             await interaction.response.send_modal(
@@ -6359,6 +6384,130 @@ class PlinkoChoiceView(discord.ui.View):
             ephemeral=True
         )
 
+class CashTipModal(
+    discord.ui.Modal,
+    title="💵 Cash Tip"
+):
+
+    amount = discord.ui.TextInput(
+        label="Amount",
+        placeholder="Example: 50",
+        required=True,
+        max_length=20
+    )
+
+    reason = discord.ui.TextInput(
+        label="Reason",
+        placeholder="Example: Great support during the stream",
+        required=True,
+        max_length=500,
+        style=discord.TextStyle.paragraph
+    )
+
+    def __init__(
+        self,
+        winner_id: int
+    ):
+        super().__init__()
+
+        self.winner_id = winner_id
+
+    async def on_submit(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        # -----------------------------------------
+        # GET MEMBER
+        # -----------------------------------------
+
+        member = interaction.guild.get_member(
+            self.winner_id
+        )
+
+        if member is None:
+
+            await interaction.response.send_message(
+                "❌ That member is no longer in the server.",
+                ephemeral=True
+            )
+
+            return
+
+        # -----------------------------------------
+        # VALIDATE AMOUNT
+        # -----------------------------------------
+
+        try:
+
+            prize_value = float(
+                self.amount.value
+                .replace("$", "")
+                .replace(",", "")
+                .strip()
+            )
+
+            if prize_value <= 0:
+                raise ValueError
+
+        except ValueError:
+
+            await interaction.response.send_message(
+                "❌ Amount must be a positive number.\n"
+                "Example: `50` or `25.50`",
+                ephemeral=True
+            )
+
+            return
+
+        # -----------------------------------------
+        # VALIDATE REASON
+        # -----------------------------------------
+
+        reason = self.reason.value.strip()
+
+        if not reason:
+
+            await interaction.response.send_message(
+                "❌ Please enter a reason for the Cash Tip.",
+                ephemeral=True
+            )
+
+            return
+
+        # -----------------------------------------
+        # CREATE PRIZE DATA
+        # -----------------------------------------
+
+        prize_data = {
+            "winner_id": member.id,
+            "winner_name": member.display_name,
+            "winner_mention": member.mention,
+
+            "prize_type": "Cash Tip",
+
+            "slot_name": None,
+            "quantity": None,
+            "bet_size": None,
+
+            "prize_value": prize_value,
+            "wild_points": None,
+
+            "kick_link": None,
+
+            # New field
+            "reason": reason
+        }
+
+        # -----------------------------------------
+        # SHOW CONFIRMATION
+        # -----------------------------------------
+
+        await show_prize_confirmation(
+            interaction,
+            prize_data
+        )
+        
 class TipPrizeModal(
     discord.ui.Modal,
     title="💵 Tip Prize"
@@ -7149,7 +7298,6 @@ class PrizeConfirmationView(discord.ui.View):
             view=self
         )
 
-        # Continue to Part 5
         await create_pending_prize(
             interaction,
             self.prize_data
@@ -7161,22 +7309,89 @@ class PrizeConfirmationView(discord.ui.View):
         style=discord.ButtonStyle.danger
     )
     async def cancel(
-            self,
-            interaction: discord.Interaction,
-            button: discord.ui.Button
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
     ):
 
         prize_type = self.prize_data["prize_type"]
         winner_id = self.prize_data["winner_id"]
 
+        # -----------------------------------------
+        # FREE SPINS
+        # -----------------------------------------
+
         if prize_type in (
-            "Free Spins",
-            "Plinko - Free Spins"
+                "Free Spins",
+                "Plinko - Free Spins",
+                "Wheel - Free Spins"
         ):
 
             await interaction.response.send_modal(
-                FreeSpinsModal(winner_id)
+                FreeSpinsModal(
+                    winner_id,
+                    prize_type
+                )
             )
+
+        # -----------------------------------------
+        # WHEEL TIP
+        # -----------------------------------------
+
+        elif prize_type == "Wheel - Tip":
+
+            await interaction.response.send_modal(
+                TipPrizeModal(
+                    winner_id,
+                    prize_type
+                )
+            )
+
+        # -----------------------------------------
+        # CASH TIP
+        # -----------------------------------------
+
+        elif prize_type == "Cash Tip":
+
+            await interaction.response.send_modal(
+                CashTipModal(
+                    winner_id
+                )
+            )
+
+        # -----------------------------------------
+        # RAFFLE
+        # -----------------------------------------
+
+        elif prize_type == "Raffle":
+
+            await interaction.response.send_modal(
+                RaffleModal(winner_id)
+            )
+
+        # -----------------------------------------
+        # TOP CHATTER
+        # -----------------------------------------
+
+        elif prize_type == "Top Chatter":
+
+            await interaction.response.send_modal(
+                TopChatterModal(winner_id)
+            )
+
+        # -----------------------------------------
+        # BONUS BUY
+        # -----------------------------------------
+
+        elif prize_type == "Bonus Buy":
+
+            await interaction.response.send_modal(
+                BonusBuyModal(winner_id)
+            )
+
+        # -----------------------------------------
+        # TWITTER GIVEAWAY
+        # -----------------------------------------
 
         elif prize_type == "Twitter Giveaway":
 
@@ -7184,11 +7399,19 @@ class PrizeConfirmationView(discord.ui.View):
                 TwitterGiveawayModal(winner_id)
             )
 
+        # -----------------------------------------
+        # GUESS THE BALANCE
+        # -----------------------------------------
+
         elif prize_type == "Guess the Balance":
 
             await interaction.response.send_modal(
                 GuessBalanceModal(winner_id)
             )
+
+        # -----------------------------------------
+        # TOURNAMENT
+        # -----------------------------------------
 
         elif prize_type == "Tournament":
 
@@ -7196,20 +7419,31 @@ class PrizeConfirmationView(discord.ui.View):
                 TournamentModal(winner_id)
             )
 
-        elif prize_type == "Plinko":
+        # -----------------------------------------
+        # PLINKO WILD POINTS
+        # -----------------------------------------
 
-            if self.prize_data.get("wild_points") is not None:
+        elif prize_type in (
+                "Plinko Wild Points",
+                "Plinko"
+        ) and self.prize_data.get("wild_points") is not None:
 
-                await interaction.response.send_modal(
-                    PlinkoWildPointsModal(winner_id)
-                )
+            await interaction.response.send_modal(
+                PlinkoWildPointsModal(winner_id)
+            )
 
-            else:
+        # -----------------------------------------
+        # PLINKO CASH PRIZE
+        # -----------------------------------------
 
-                await interaction.response.send_modal(
-                    PlinkoPrizeModal(winner_id)
-                )
+        elif prize_type in (
+                "Plinko Prize",
+                "Plinko"
+        ):
 
+            await interaction.response.send_modal(
+                PlinkoPrizeModal(winner_id)
+            )
 
 @bot.tree.command(
     name="stream_prizes",
@@ -7362,6 +7596,13 @@ async def show_prize_confirmation(
             inline=True
         )
 
+        if prize_data.get("reason"):
+            embed.add_field(
+                name="📝 Reason",
+                value=prize_data["reason"],
+                inline=False
+            )
+
     # Wild Points
     elif prize_data["wild_points"] is not None:
 
@@ -7471,9 +7712,14 @@ async def create_pending_prize(
     )
 
     if winner:
+
         embed.set_thumbnail(
             url=winner.display_avatar.url
         )
+
+    # -----------------------------------------
+    # WINNER
+    # -----------------------------------------
 
     embed.add_field(
         name="👤 Winner",
@@ -7481,16 +7727,24 @@ async def create_pending_prize(
         inline=False
     )
 
+    # -----------------------------------------
+    # PRIZE TYPE
+    # -----------------------------------------
+
     embed.add_field(
         name="🎁 Prize Type",
         value=prize_data["prize_type"],
         inline=True
     )
 
-    # Free Spins
+    # -----------------------------------------
+    # FREE SPINS
+    # -----------------------------------------
+
     if prize_data["prize_type"] in (
             "Free Spins",
-            "Plinko - Free Spins"
+            "Plinko - Free Spins",
+            "Wheel - Free Spins"
     ):
 
         embed.add_field(
@@ -7518,7 +7772,27 @@ async def create_pending_prize(
         )
 
     # -----------------------------------------
-    # CASH PRIZE
+    # CASH TIP
+    # -----------------------------------------
+
+    elif prize_data["prize_type"] == "Cash Tip":
+
+        embed.add_field(
+            name="💵 Amount",
+            value=f"${prize_data['prize_value']:.2f}",
+            inline=True
+        )
+
+        if prize_data.get("reason"):
+
+            embed.add_field(
+                name="📝 Reason",
+                value=prize_data["reason"],
+                inline=False
+            )
+
+    # -----------------------------------------
+    # OTHER CASH PRIZES
     # -----------------------------------------
 
     elif prize_data.get("prize_value") is not None:
@@ -7540,6 +7814,10 @@ async def create_pending_prize(
             value=f"{prize_data['wild_points']:,}",
             inline=True
         )
+
+    # -----------------------------------------
+    # STATUS
+    # -----------------------------------------
 
     embed.add_field(
         name="⏳ Status",
@@ -7600,6 +7878,7 @@ async def save_pending_prize(
                 prize_value,
                 wild_points,
                 kick_link,
+                reason,
                 approved_by,
                 status,
                 pending_channel_id,
@@ -7609,7 +7888,7 @@ async def save_pending_prize(
                 month,
                 year
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 prize_data["winner_id"],
@@ -7621,6 +7900,7 @@ async def save_pending_prize(
                 prize_data.get("prize_value"),
                 prize_data.get("wild_points"),
                 prize_data.get("kick_link"),
+                prize_data.get("reason"),
                 None,
                 "pending",
                 channel_id,
@@ -7736,6 +8016,7 @@ async def approve_prize(
                 prize_value,
                 wild_points,
                 kick_link,
+                reason,
                 approved_by,
                 status,
                 pending_channel_id,
@@ -7776,6 +8057,7 @@ async def approve_prize(
             prize_value,
             wild_points,
             kick_link,
+            reason,
             old_approved_by,
             status,
             pending_channel_id,
@@ -7851,6 +8133,7 @@ async def approve_prize(
         prize_value=prize_value,
         wild_points=wild_points,
         kick_link=kick_link,
+        reason=reason,
         approved_by=approver
     )
 
@@ -7892,6 +8175,7 @@ async def log_prize_sent(
     prize_value: float | None,
     wild_points: int | None,
     kick_link: str | None,
+    reason: str | None,
     approved_by: discord.Member
 ):
 
@@ -7979,7 +8263,28 @@ async def log_prize_sent(
         )
 
     # -----------------------------------------
-    # CASH PRIZE
+    # CASH TIP
+    # -----------------------------------------
+
+    elif prize_type == "Cash Tip":
+
+        embed.add_field(
+            name="💵 Amount",
+            value=f"${prize_value:.2f}"
+            if prize_value is not None
+            else "N/A",
+            inline=True
+        )
+
+        if reason:
+            embed.add_field(
+                name="📝 Reason",
+                value=reason,
+                inline=False
+            )
+
+    # -----------------------------------------
+    # OTHER CASH PRIZES
     # -----------------------------------------
 
     elif prize_value is not None:
@@ -8387,6 +8692,7 @@ async def record_prize_totals(
     plinko_wild_points = 0
     wild_tag = 0.0
     wheel = 0.0
+    cash_tip = 0.0
     total_prize_value = 0.0
 
     # -----------------------------------------
@@ -8509,6 +8815,16 @@ async def record_prize_totals(
         total_prize_value = wheel
         
     # -----------------------------------------
+    # CASH TIP
+    # -----------------------------------------
+
+    elif prize_type == "Cash Tip":
+
+        cash_tip = prize_value or 0
+
+        total_prize_value = cash_tip
+        
+    # -----------------------------------------
     # DATABASE
     # -----------------------------------------
 
@@ -8533,9 +8849,10 @@ async def record_prize_totals(
                 plinko_wild_points,
                 wild_tag,
                 wheel,
+                cash_tip,
                 total_prize_value
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 
             ON CONFLICT(year, month)
             DO UPDATE SET
@@ -8570,6 +8887,9 @@ async def record_prize_totals(
                 wheel =
                     wheel + excluded.wheel,
 
+                cash_tip =
+                    cash_tip + excluded.cash_tip,
+    
                 total_prize_value =
                     total_prize_value + excluded.total_prize_value
             """,
@@ -8586,6 +8906,7 @@ async def record_prize_totals(
                 plinko_wild_points,
                 wild_tag,
                 wheel,
+                cash_tip,
                 total_prize_value
             )
         )
@@ -8609,10 +8930,11 @@ async def record_prize_totals(
                 plinko_wild_points,
                 wild_tag,
                 wheel,
+                cash_tip,
                 total_prize_value,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 
             ON CONFLICT(winner_id)
             DO UPDATE SET
@@ -8650,6 +8972,9 @@ async def record_prize_totals(
                 wheel =
                     wheel + excluded.wheel,
     
+                cash_tip =
+                    cash_tip + excluded.cash_tip,
+    
                 total_prize_value =
                     total_prize_value + excluded.total_prize_value,
 
@@ -8669,6 +8994,7 @@ async def record_prize_totals(
                 plinko_wild_points,
                 wild_tag,
                 wheel,
+                cash_tip,
                 total_prize_value,
                 now.isoformat()
             )
@@ -12434,6 +12760,19 @@ async def wildlines_profile(
                     ), 0),
 
                     -- =========================================
+                    -- CASH TIP
+                    -- =========================================
+
+                    COALESCE(SUM(
+                        CASE
+                            WHEN LOWER(REPLACE(TRIM(prize_type), ' ', '_'))
+                                = 'cash_tip'
+                            THEN COALESCE(prize_value, 0)
+                            ELSE 0
+                        END
+                    ), 0),
+
+                    -- =========================================
                     -- TOTAL CASH PRIZES
                     -- =========================================
                     -- Wild Points are NOT included.
@@ -12467,7 +12806,9 @@ async def wildlines_profile(
                                     'wheel_free_spins',
 
                                     'server_tag_tip',
-                                    'server_tag_free_spins'
+                                    'server_tag_free_spins',
+
+                                    'cash_tip'
                                 )
                             THEN COALESCE(prize_value, 0)
 
@@ -12511,6 +12852,7 @@ async def wildlines_profile(
                     bet_size,
                     prize_value,
                     wild_points,
+                    reason,
                     created_at,
                     approved_at
                 FROM prize_awards
@@ -12542,6 +12884,7 @@ async def wildlines_profile(
             bonus_buy,
             wheel,
             server_tag,
+            cash_tip,
             total_prize_value
         ) = totals
 
@@ -12643,6 +12986,12 @@ async def wildlines_profile(
             inline=True
         )
 
+        embed.add_field(
+            name="💵 Cash Tip",
+            value=f"${cash_tip:,.2f}",
+            inline=True
+        )
+
         # =========================================
         # PRIZE HISTORY
         # =========================================
@@ -12660,6 +13009,7 @@ async def wildlines_profile(
                     bet_size,
                     prize_value,
                     wild_points,
+                    reason,
                     created_at,
                     approved_at
                 ) = row
@@ -12726,6 +13076,28 @@ async def wildlines_profile(
                     details = (
                         f"{wild_points:,} Wild Points"
                     )
+
+                # -----------------------------------------
+                # CASH TIP
+                # -----------------------------------------
+
+                elif normalized_type == "cash_tip":
+
+                    if prize_value is not None:
+
+                        details = (
+                            f"${prize_value:,.2f}"
+                        )
+
+                    else:
+
+                        details = ""
+
+                    if reason:
+
+                        details += (
+                            f" • 📝 {reason}"
+                        )
 
                 # -----------------------------------------
                 # WHEEL
@@ -12932,6 +13304,7 @@ async def wildlines_profile(
             "❌ Failed to load the WildLines profile.",
             ephemeral=True
         )
+        
 
 @bot.tree.command(
     name="wildlines_monthly",
@@ -13134,6 +13507,19 @@ async def wildlines_monthly(
                         END
                     ), 0),
 
+                    # =========================================
+                    # CASH TIP
+                    # =========================================
+
+                    COALESCE(SUM(
+                        CASE
+                            WHEN LOWER(REPLACE(TRIM(prize_type), ' ', '_'))
+                                = 'cash_tip'
+                            THEN COALESCE(prize_value, 0)
+                            ELSE 0
+                        END
+                    ), 0),
+
                     -- =========================================
                     -- TOTAL CASH PRIZE VALUE
                     -- =========================================
@@ -13168,7 +13554,9 @@ async def wildlines_monthly(
                                     'wheel_free_spins',
 
                                     'server_tag_tip',
-                                    'server_tag_free_spins'
+                                    'server_tag_free_spins',
+
+                                    'cash_tip'
                                 )
                             THEN COALESCE(prize_value, 0)
 
@@ -13224,6 +13612,7 @@ async def wildlines_monthly(
             bonus_buy,
             wheel,
             server_tag,
+            cash_tip,
             total_prize_value,
             unique_winners
         ) = totals
@@ -13309,6 +13698,12 @@ async def wildlines_monthly(
         embed.add_field(
             name="🏷️ Server Tag",
             value=f"${server_tag:,.2f}",
+            inline=True
+        )
+
+        embed.add_field(
+            name="💵 Cash Tip",
+            value=f"${cash_tip:,.2f}",
             inline=True
         )
 
