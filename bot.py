@@ -8934,7 +8934,7 @@ async def record_prize_totals(
                 total_prize_value,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 
             ON CONFLICT(winner_id)
             DO UPDATE SET
