@@ -6265,9 +6265,9 @@ class CurrencySelectView(discord.ui.View):
 
         currency = select.values[0]
 
-        # -----------------------------------------
+        # =========================================
         # FREE SPINS
-        # -----------------------------------------
+        # =========================================
 
         if self.prize_type in (
             "Free Spins",
@@ -6283,9 +6283,9 @@ class CurrencySelectView(discord.ui.View):
                 )
             )
 
-        # -----------------------------------------
+        # =========================================
         # WHEEL TIP
-        # -----------------------------------------
+        # =========================================
 
         elif self.prize_type == "Wheel - Tip":
 
@@ -6297,9 +6297,9 @@ class CurrencySelectView(discord.ui.View):
                 )
             )
 
-        # -----------------------------------------
+        # =========================================
         # CASH TIP
-        # -----------------------------------------
+        # =========================================
 
         elif self.prize_type == "Cash Tip":
 
@@ -6310,9 +6310,9 @@ class CurrencySelectView(discord.ui.View):
                 )
             )
 
-        # -----------------------------------------
+        # =========================================
         # RAFFLE
-        # -----------------------------------------
+        # =========================================
 
         elif self.prize_type == "Raffle":
 
@@ -6323,9 +6323,9 @@ class CurrencySelectView(discord.ui.View):
                 )
             )
 
-        # -----------------------------------------
+        # =========================================
         # TOP CHATTER
-        # -----------------------------------------
+        # =========================================
 
         elif self.prize_type == "Top Chatter":
 
@@ -6336,9 +6336,9 @@ class CurrencySelectView(discord.ui.View):
                 )
             )
 
-        # -----------------------------------------
+        # =========================================
         # BONUS BUY
-        # -----------------------------------------
+        # =========================================
 
         elif self.prize_type == "Bonus Buy":
 
@@ -6349,9 +6349,9 @@ class CurrencySelectView(discord.ui.View):
                 )
             )
 
-        # -----------------------------------------
+        # =========================================
         # TWITTER GIVEAWAY
-        # -----------------------------------------
+        # =========================================
 
         elif self.prize_type == "Twitter Giveaway":
 
@@ -6362,9 +6362,9 @@ class CurrencySelectView(discord.ui.View):
                 )
             )
 
-        # -----------------------------------------
+        # =========================================
         # GUESS THE BALANCE
-        # -----------------------------------------
+        # =========================================
 
         elif self.prize_type == "Guess the Balance":
 
@@ -6375,9 +6375,9 @@ class CurrencySelectView(discord.ui.View):
                 )
             )
 
-        # -----------------------------------------
+        # =========================================
         # TOURNAMENT
-        # -----------------------------------------
+        # =========================================
 
         elif self.prize_type == "Tournament":
 
@@ -6388,17 +6388,32 @@ class CurrencySelectView(discord.ui.View):
                 )
             )
 
-        # -----------------------------------------
-        # PLINKO PRIZE
-        # -----------------------------------------
+        # =========================================
+        # PLINKO CASH PRIZE
+        # =========================================
 
-        elif self.prize_type == "Plinko Prize":
+        elif self.prize_type in (
+            "Plinko",
+            "Plinko Prize"
+        ):
 
             await interaction.response.send_modal(
                 PlinkoPrizeModal(
                     self.winner_id,
                     currency
                 )
+            )
+
+        # =========================================
+        # UNKNOWN PRIZE TYPE
+        # =========================================
+
+        else:
+
+            await interaction.response.send_message(
+                "❌ This prize type does not support "
+                "currency selection.",
+                ephemeral=True
             )
 
 
@@ -6514,6 +6529,10 @@ class PlinkoChoiceView(discord.ui.View):
             ephemeral=True
         )
 
+# =========================================
+# CASH TIP MODAL
+# =========================================
+
 class CashTipModal(
     discord.ui.Modal,
     title="💵 Cash Tip"
@@ -6549,9 +6568,9 @@ class CashTipModal(
         interaction: discord.Interaction
     ):
 
-        # -----------------------------------------
+        # =========================================
         # GET MEMBER
-        # -----------------------------------------
+        # =========================================
 
         member = interaction.guild.get_member(
             self.winner_id
@@ -6566,9 +6585,9 @@ class CashTipModal(
 
             return
 
-        # -----------------------------------------
+        # =========================================
         # VALIDATE AMOUNT
-        # -----------------------------------------
+        # =========================================
 
         try:
 
@@ -6592,14 +6611,9 @@ class CashTipModal(
 
             return
 
-        original_amount = round(
-            original_amount,
-            2
-        )
-
-        # -----------------------------------------
+        # =========================================
         # VALIDATE REASON
-        # -----------------------------------------
+        # =========================================
 
         reason = self.reason.value.strip()
 
@@ -6612,9 +6626,9 @@ class CashTipModal(
 
             return
 
-        # -----------------------------------------
+        # =========================================
         # CONVERT TO USD
-        # -----------------------------------------
+        # =========================================
 
         try:
 
@@ -6646,9 +6660,9 @@ class CashTipModal(
             "exchange_rate"
         ]
 
-        # -----------------------------------------
+        # =========================================
         # CREATE PRIZE DATA
-        # -----------------------------------------
+        # =========================================
 
         prize_data = {
 
@@ -6662,22 +6676,14 @@ class CashTipModal(
             "quantity": None,
             "bet_size": None,
 
-            # -------------------------------------
-            # ORIGINAL CURRENCY
-            # -------------------------------------
+            "original_amount": round(
+                original_amount,
+                2
+            ),
 
-            "original_amount": original_amount,
             "original_currency": self.currency,
 
-            # -------------------------------------
-            # EXCHANGE RATE
-            # -------------------------------------
-
             "exchange_rate": exchange_rate,
-
-            # -------------------------------------
-            # USD VALUE
-            # -------------------------------------
 
             "prize_value": usd_amount,
 
@@ -6685,22 +6691,22 @@ class CashTipModal(
 
             "kick_link": None,
 
-            # -------------------------------------
-            # REASON
-            # -------------------------------------
-
             "reason": reason
         }
 
-        # -----------------------------------------
+        # =========================================
         # SHOW CONFIRMATION
-        # -----------------------------------------
+        # =========================================
 
         await show_prize_confirmation(
             interaction,
             prize_data
         )
 
+
+# =========================================
+# TIP PRIZE MODAL
+# =========================================
 
 class TipPrizeModal(
     discord.ui.Modal,
@@ -6731,10 +6737,6 @@ class TipPrizeModal(
         interaction: discord.Interaction
     ):
 
-        # -----------------------------------------
-        # GET MEMBER
-        # -----------------------------------------
-
         member = interaction.guild.get_member(
             self.winner_id
         )
@@ -6748,9 +6750,9 @@ class TipPrizeModal(
 
             return
 
-        # -----------------------------------------
-        # VALIDATE TIP AMOUNT
-        # -----------------------------------------
+        # =========================================
+        # VALIDATE AMOUNT
+        # =========================================
 
         try:
 
@@ -6774,14 +6776,9 @@ class TipPrizeModal(
 
             return
 
-        original_amount = round(
-            original_amount,
-            2
-        )
-
-        # -----------------------------------------
+        # =========================================
         # CONVERT TO USD
-        # -----------------------------------------
+        # =========================================
 
         try:
 
@@ -6813,9 +6810,9 @@ class TipPrizeModal(
             "exchange_rate"
         ]
 
-        # -----------------------------------------
+        # =========================================
         # CREATE PRIZE DATA
-        # -----------------------------------------
+        # =========================================
 
         prize_data = {
 
@@ -6829,28 +6826,31 @@ class TipPrizeModal(
             "quantity": None,
             "bet_size": None,
 
-            "original_amount": original_amount,
+            "original_amount": round(
+                original_amount,
+                2
+            ),
+
             "original_currency": self.currency,
+
             "exchange_rate": exchange_rate,
 
             "prize_value": usd_amount,
 
             "wild_points": None,
 
-            "kick_link": None,
-
-            "reason": None
+            "kick_link": None
         }
-
-        # -----------------------------------------
-        # SHOW CONFIRMATION
-        # -----------------------------------------
 
         await show_prize_confirmation(
             interaction,
             prize_data
         )
 
+
+# =========================================
+# BONUS BUY MODAL
+# =========================================
 
 class BonusBuyModal(
     discord.ui.Modal,
@@ -6859,18 +6859,20 @@ class BonusBuyModal(
 
     prize = discord.ui.TextInput(
         label="Prize",
-        placeholder="Example: $50",
+        placeholder="Example: 50",
         required=True,
         max_length=100
     )
 
     def __init__(
         self,
-        winner_id: int
+        winner_id: int,
+        currency: str = "USD"
     ):
         super().__init__()
 
         self.winner_id = winner_id
+        self.currency = currency
 
     async def on_submit(
         self,
@@ -6890,24 +6892,61 @@ class BonusBuyModal(
 
             return
 
-        prize_value = parse_money(
+        # =========================================
+        # VALIDATE AMOUNT
+        # =========================================
+
+        original_amount = parse_money(
             self.prize.value
         )
 
-        if prize_value is None or prize_value <= 0:
+        if original_amount is None or original_amount <= 0:
 
             await interaction.response.send_message(
                 "❌ Invalid prize amount.\n"
-                "Example: `$50`",
+                "Example: `50`",
                 ephemeral=True
             )
 
             return
 
-        prize_value = round(
-            prize_value,
+        # =========================================
+        # CONVERT TO USD
+        # =========================================
+
+        try:
+
+            conversion = await convert_to_usd(
+                original_amount,
+                self.currency
+            )
+
+        except Exception as e:
+
+            print(
+                f"❌ Currency conversion error: {e}"
+            )
+
+            await interaction.response.send_message(
+                "❌ Unable to get the current currency "
+                "conversion rate. Please try again.",
+                ephemeral=True
+            )
+
+            return
+
+        usd_amount = round(
+            conversion["usd_amount"],
             2
         )
+
+        exchange_rate = conversion[
+            "exchange_rate"
+        ]
+
+        # =========================================
+        # PRIZE DATA
+        # =========================================
 
         prize_data = {
 
@@ -6921,17 +6960,20 @@ class BonusBuyModal(
             "quantity": None,
             "bet_size": None,
 
-            "original_amount": prize_value,
-            "original_currency": "USD",
-            "exchange_rate": 1.0,
+            "original_amount": round(
+                original_amount,
+                2
+            ),
 
-            "prize_value": prize_value,
+            "original_currency": self.currency,
+
+            "exchange_rate": exchange_rate,
+
+            "prize_value": usd_amount,
 
             "wild_points": None,
 
-            "kick_link": None,
-
-            "reason": None
+            "kick_link": None
         }
 
         await show_prize_confirmation(
@@ -6939,6 +6981,10 @@ class BonusBuyModal(
             prize_data
         )
 
+
+# =========================================
+# FREE SPINS MODAL
+# =========================================
 
 class FreeSpinsModal(
     discord.ui.Modal,
@@ -6983,10 +7029,6 @@ class FreeSpinsModal(
         interaction: discord.Interaction
     ):
 
-        # -----------------------------------------
-        # GET MEMBER
-        # -----------------------------------------
-
         member = interaction.guild.get_member(
             self.winner_id
         )
@@ -7000,9 +7042,9 @@ class FreeSpinsModal(
 
             return
 
-        # -----------------------------------------
+        # =========================================
         # VALIDATE QUANTITY
-        # -----------------------------------------
+        # =========================================
 
         try:
 
@@ -7022,9 +7064,9 @@ class FreeSpinsModal(
 
             return
 
-        # -----------------------------------------
+        # =========================================
         # VALIDATE BET SIZE
-        # -----------------------------------------
+        # =========================================
 
         try:
 
@@ -7048,23 +7090,18 @@ class FreeSpinsModal(
 
             return
 
-        bet_size = round(
-            bet_size,
-            2
-        )
-
-        # -----------------------------------------
+        # =========================================
         # CALCULATE ORIGINAL VALUE
-        # -----------------------------------------
+        # =========================================
 
         original_amount = round(
             quantity * bet_size,
             2
         )
 
-        # -----------------------------------------
+        # =========================================
         # CONVERT TO USD
-        # -----------------------------------------
+        # =========================================
 
         try:
 
@@ -7096,9 +7133,9 @@ class FreeSpinsModal(
             "exchange_rate"
         ]
 
-        # -----------------------------------------
-        # CREATE PRIZE DATA
-        # -----------------------------------------
+        # =========================================
+        # PRIZE DATA
+        # =========================================
 
         prize_data = {
 
@@ -7114,41 +7151,28 @@ class FreeSpinsModal(
 
             "bet_size": bet_size,
 
-            # -------------------------------------
-            # ORIGINAL CURRENCY
-            # -------------------------------------
-
             "original_amount": original_amount,
+
             "original_currency": self.currency,
 
-            # -------------------------------------
-            # EXCHANGE RATE
-            # -------------------------------------
-
             "exchange_rate": exchange_rate,
-
-            # -------------------------------------
-            # USD VALUE
-            # -------------------------------------
 
             "prize_value": usd_amount,
 
             "wild_points": None,
 
-            "kick_link": None,
-
-            "reason": None
+            "kick_link": None
         }
-
-        # -----------------------------------------
-        # SHOW CONFIRMATION
-        # -----------------------------------------
 
         await show_prize_confirmation(
             interaction,
             prize_data
         )
 
+
+# =========================================
+# RAFFLE MODAL
+# =========================================
 
 class RaffleModal(
     discord.ui.Modal,
@@ -7157,18 +7181,20 @@ class RaffleModal(
 
     prize = discord.ui.TextInput(
         label="Prize",
-        placeholder="Example: $50",
+        placeholder="Example: 50",
         required=True,
         max_length=100
     )
 
     def __init__(
         self,
-        winner_id: int
+        winner_id: int,
+        currency: str = "USD"
     ):
         super().__init__()
 
         self.winner_id = winner_id
+        self.currency = currency
 
     async def on_submit(
         self,
@@ -7188,24 +7214,49 @@ class RaffleModal(
 
             return
 
-        prize_value = parse_money(
+        original_amount = parse_money(
             self.prize.value
         )
 
-        if prize_value is None or prize_value <= 0:
+        if original_amount is None or original_amount <= 0:
 
             await interaction.response.send_message(
                 "❌ Invalid prize amount.\n"
-                "Example: `$50`",
+                "Example: `50`",
                 ephemeral=True
             )
 
             return
 
-        prize_value = round(
-            prize_value,
+        try:
+
+            conversion = await convert_to_usd(
+                original_amount,
+                self.currency
+            )
+
+        except Exception as e:
+
+            print(
+                f"❌ Currency conversion error: {e}"
+            )
+
+            await interaction.response.send_message(
+                "❌ Unable to get the current currency "
+                "conversion rate. Please try again.",
+                ephemeral=True
+            )
+
+            return
+
+        usd_amount = round(
+            conversion["usd_amount"],
             2
         )
+
+        exchange_rate = conversion[
+            "exchange_rate"
+        ]
 
         prize_data = {
 
@@ -7219,17 +7270,20 @@ class RaffleModal(
             "quantity": None,
             "bet_size": None,
 
-            "original_amount": prize_value,
-            "original_currency": "USD",
-            "exchange_rate": 1.0,
+            "original_amount": round(
+                original_amount,
+                2
+            ),
 
-            "prize_value": prize_value,
+            "original_currency": self.currency,
+
+            "exchange_rate": exchange_rate,
+
+            "prize_value": usd_amount,
 
             "wild_points": None,
 
-            "kick_link": None,
-
-            "reason": None
+            "kick_link": None
         }
 
         await show_prize_confirmation(
@@ -7238,6 +7292,10 @@ class RaffleModal(
         )
 
 
+# =========================================
+# TOP CHATTER MODAL
+# =========================================
+
 class TopChatterModal(
     discord.ui.Modal,
     title="💬 Top Chatter"
@@ -7245,18 +7303,20 @@ class TopChatterModal(
 
     prize = discord.ui.TextInput(
         label="Prize",
-        placeholder="Example: $50",
+        placeholder="Example: 50",
         required=True,
         max_length=100
     )
 
     def __init__(
         self,
-        winner_id: int
+        winner_id: int,
+        currency: str = "USD"
     ):
         super().__init__()
 
         self.winner_id = winner_id
+        self.currency = currency
 
     async def on_submit(
         self,
@@ -7276,24 +7336,49 @@ class TopChatterModal(
 
             return
 
-        prize_value = parse_money(
+        original_amount = parse_money(
             self.prize.value
         )
 
-        if prize_value is None or prize_value <= 0:
+        if original_amount is None or original_amount <= 0:
 
             await interaction.response.send_message(
                 "❌ Invalid prize amount.\n"
-                "Example: `$50`",
+                "Example: `50`",
                 ephemeral=True
             )
 
             return
 
-        prize_value = round(
-            prize_value,
+        try:
+
+            conversion = await convert_to_usd(
+                original_amount,
+                self.currency
+            )
+
+        except Exception as e:
+
+            print(
+                f"❌ Currency conversion error: {e}"
+            )
+
+            await interaction.response.send_message(
+                "❌ Unable to get the current currency "
+                "conversion rate. Please try again.",
+                ephemeral=True
+            )
+
+            return
+
+        usd_amount = round(
+            conversion["usd_amount"],
             2
         )
+
+        exchange_rate = conversion[
+            "exchange_rate"
+        ]
 
         prize_data = {
 
@@ -7307,17 +7392,20 @@ class TopChatterModal(
             "quantity": None,
             "bet_size": None,
 
-            "original_amount": prize_value,
-            "original_currency": "USD",
-            "exchange_rate": 1.0,
+            "original_amount": round(
+                original_amount,
+                2
+            ),
 
-            "prize_value": prize_value,
+            "original_currency": self.currency,
+
+            "exchange_rate": exchange_rate,
+
+            "prize_value": usd_amount,
 
             "wild_points": None,
 
-            "kick_link": None,
-
-            "reason": None
+            "kick_link": None
         }
 
         await show_prize_confirmation(
@@ -7326,6 +7414,10 @@ class TopChatterModal(
         )
 
 
+# =========================================
+# TWITTER GIVEAWAY MODAL
+# =========================================
+
 class TwitterGiveawayModal(
     discord.ui.Modal,
     title="🐦 Twitter Giveaway"
@@ -7333,18 +7425,20 @@ class TwitterGiveawayModal(
 
     prize = discord.ui.TextInput(
         label="Prize",
-        placeholder="Example: $50",
+        placeholder="Example: 50",
         required=True,
         max_length=100
     )
 
     def __init__(
         self,
-        winner_id: int
+        winner_id: int,
+        currency: str = "USD"
     ):
         super().__init__()
 
         self.winner_id = winner_id
+        self.currency = currency
 
     async def on_submit(
         self,
@@ -7364,24 +7458,49 @@ class TwitterGiveawayModal(
 
             return
 
-        prize_value = parse_money(
+        original_amount = parse_money(
             self.prize.value
         )
 
-        if prize_value is None or prize_value <= 0:
+        if original_amount is None or original_amount <= 0:
 
             await interaction.response.send_message(
                 "❌ Invalid prize amount.\n"
-                "Example: `$50`",
+                "Example: `50`",
                 ephemeral=True
             )
 
             return
 
-        prize_value = round(
-            prize_value,
+        try:
+
+            conversion = await convert_to_usd(
+                original_amount,
+                self.currency
+            )
+
+        except Exception as e:
+
+            print(
+                f"❌ Currency conversion error: {e}"
+            )
+
+            await interaction.response.send_message(
+                "❌ Unable to get the current currency "
+                "conversion rate. Please try again.",
+                ephemeral=True
+            )
+
+            return
+
+        usd_amount = round(
+            conversion["usd_amount"],
             2
         )
+
+        exchange_rate = conversion[
+            "exchange_rate"
+        ]
 
         prize_data = {
 
@@ -7395,17 +7514,20 @@ class TwitterGiveawayModal(
             "quantity": None,
             "bet_size": None,
 
-            "original_amount": prize_value,
-            "original_currency": "USD",
-            "exchange_rate": 1.0,
+            "original_amount": round(
+                original_amount,
+                2
+            ),
 
-            "prize_value": prize_value,
+            "original_currency": self.currency,
+
+            "exchange_rate": exchange_rate,
+
+            "prize_value": usd_amount,
 
             "wild_points": None,
 
-            "kick_link": None,
-
-            "reason": None
+            "kick_link": None
         }
 
         await show_prize_confirmation(
@@ -7414,6 +7536,10 @@ class TwitterGiveawayModal(
         )
 
 
+# =========================================
+# GUESS THE BALANCE MODAL
+# =========================================
+
 class GuessBalanceModal(
     discord.ui.Modal,
     title="💰 Guess the Balance"
@@ -7421,18 +7547,20 @@ class GuessBalanceModal(
 
     prize = discord.ui.TextInput(
         label="Prize",
-        placeholder="Example: $100",
+        placeholder="Example: 100",
         required=True,
         max_length=100
     )
 
     def __init__(
         self,
-        winner_id: int
+        winner_id: int,
+        currency: str = "USD"
     ):
         super().__init__()
 
         self.winner_id = winner_id
+        self.currency = currency
 
     async def on_submit(
         self,
@@ -7452,24 +7580,49 @@ class GuessBalanceModal(
 
             return
 
-        prize_value = parse_money(
+        original_amount = parse_money(
             self.prize.value
         )
 
-        if prize_value is None or prize_value <= 0:
+        if original_amount is None or original_amount <= 0:
 
             await interaction.response.send_message(
                 "❌ Invalid prize amount.\n"
-                "Example: `$100`",
+                "Example: `100`",
                 ephemeral=True
             )
 
             return
 
-        prize_value = round(
-            prize_value,
+        try:
+
+            conversion = await convert_to_usd(
+                original_amount,
+                self.currency
+            )
+
+        except Exception as e:
+
+            print(
+                f"❌ Currency conversion error: {e}"
+            )
+
+            await interaction.response.send_message(
+                "❌ Unable to get the current currency "
+                "conversion rate. Please try again.",
+                ephemeral=True
+            )
+
+            return
+
+        usd_amount = round(
+            conversion["usd_amount"],
             2
         )
+
+        exchange_rate = conversion[
+            "exchange_rate"
+        ]
 
         prize_data = {
 
@@ -7483,17 +7636,20 @@ class GuessBalanceModal(
             "quantity": None,
             "bet_size": None,
 
-            "original_amount": prize_value,
-            "original_currency": "USD",
-            "exchange_rate": 1.0,
+            "original_amount": round(
+                original_amount,
+                2
+            ),
 
-            "prize_value": prize_value,
+            "original_currency": self.currency,
+
+            "exchange_rate": exchange_rate,
+
+            "prize_value": usd_amount,
 
             "wild_points": None,
 
-            "kick_link": None,
-
-            "reason": None
+            "kick_link": None
         }
 
         await show_prize_confirmation(
@@ -7502,6 +7658,10 @@ class GuessBalanceModal(
         )
 
 
+# =========================================
+# TOURNAMENT MODAL
+# =========================================
+
 class TournamentModal(
     discord.ui.Modal,
     title="🏆 Tournament Prize"
@@ -7509,18 +7669,20 @@ class TournamentModal(
 
     prize = discord.ui.TextInput(
         label="Prize",
-        placeholder="Example: $250",
+        placeholder="Example: 250",
         required=True,
         max_length=100
     )
 
     def __init__(
         self,
-        winner_id: int
+        winner_id: int,
+        currency: str = "USD"
     ):
         super().__init__()
 
         self.winner_id = winner_id
+        self.currency = currency
 
     async def on_submit(
         self,
@@ -7540,24 +7702,49 @@ class TournamentModal(
 
             return
 
-        prize_value = parse_money(
+        original_amount = parse_money(
             self.prize.value
         )
 
-        if prize_value is None or prize_value <= 0:
+        if original_amount is None or original_amount <= 0:
 
             await interaction.response.send_message(
                 "❌ Invalid prize amount.\n"
-                "Example: `$250`",
+                "Example: `250`",
                 ephemeral=True
             )
 
             return
 
-        prize_value = round(
-            prize_value,
+        try:
+
+            conversion = await convert_to_usd(
+                original_amount,
+                self.currency
+            )
+
+        except Exception as e:
+
+            print(
+                f"❌ Currency conversion error: {e}"
+            )
+
+            await interaction.response.send_message(
+                "❌ Unable to get the current currency "
+                "conversion rate. Please try again.",
+                ephemeral=True
+            )
+
+            return
+
+        usd_amount = round(
+            conversion["usd_amount"],
             2
         )
+
+        exchange_rate = conversion[
+            "exchange_rate"
+        ]
 
         prize_data = {
 
@@ -7571,17 +7758,20 @@ class TournamentModal(
             "quantity": None,
             "bet_size": None,
 
-            "original_amount": prize_value,
-            "original_currency": "USD",
-            "exchange_rate": 1.0,
+            "original_amount": round(
+                original_amount,
+                2
+            ),
 
-            "prize_value": prize_value,
+            "original_currency": self.currency,
+
+            "exchange_rate": exchange_rate,
+
+            "prize_value": usd_amount,
 
             "wild_points": None,
 
-            "kick_link": None,
-
-            "reason": None
+            "kick_link": None
         }
 
         await show_prize_confirmation(
@@ -7590,6 +7780,10 @@ class TournamentModal(
         )
 
 
+# =========================================
+# PLINKO CASH PRIZE MODAL
+# =========================================
+
 class PlinkoPrizeModal(
     discord.ui.Modal,
     title="🎯 Plinko Prize"
@@ -7597,18 +7791,20 @@ class PlinkoPrizeModal(
 
     prize = discord.ui.TextInput(
         label="Prize",
-        placeholder="Example: $50",
+        placeholder="Example: 50",
         required=True,
         max_length=100
     )
 
     def __init__(
         self,
-        winner_id: int
+        winner_id: int,
+        currency: str = "USD"
     ):
         super().__init__()
 
         self.winner_id = winner_id
+        self.currency = currency
 
     async def on_submit(
         self,
@@ -7628,24 +7824,57 @@ class PlinkoPrizeModal(
 
             return
 
-        prize_value = parse_money(
+        original_amount = parse_money(
             self.prize.value
         )
 
-        if prize_value is None or prize_value <= 0:
+        if original_amount is None or original_amount <= 0:
 
             await interaction.response.send_message(
                 "❌ Invalid prize amount.\n"
-                "Example: `$50`",
+                "Example: `50`",
                 ephemeral=True
             )
 
             return
 
-        prize_value = round(
-            prize_value,
+        # =========================================
+        # CONVERT TO USD
+        # =========================================
+
+        try:
+
+            conversion = await convert_to_usd(
+                original_amount,
+                self.currency
+            )
+
+        except Exception as e:
+
+            print(
+                f"❌ Currency conversion error: {e}"
+            )
+
+            await interaction.response.send_message(
+                "❌ Unable to get the current currency "
+                "conversion rate. Please try again.",
+                ephemeral=True
+            )
+
+            return
+
+        usd_amount = round(
+            conversion["usd_amount"],
             2
         )
+
+        exchange_rate = conversion[
+            "exchange_rate"
+        ]
+
+        # =========================================
+        # PRIZE DATA
+        # =========================================
 
         prize_data = {
 
@@ -7653,23 +7882,31 @@ class PlinkoPrizeModal(
             "winner_name": member.display_name,
             "winner_mention": member.mention,
 
+            # IMPORTANT:
+            # Keep this as "Plinko" because your
+            # record_prize_totals() uses this value
+            # to determine Plinko cash vs points.
+
             "prize_type": "Plinko",
 
             "slot_name": None,
             "quantity": None,
             "bet_size": None,
 
-            "original_amount": prize_value,
-            "original_currency": "USD",
-            "exchange_rate": 1.0,
+            "original_amount": round(
+                original_amount,
+                2
+            ),
 
-            "prize_value": prize_value,
+            "original_currency": self.currency,
+
+            "exchange_rate": exchange_rate,
+
+            "prize_value": usd_amount,
 
             "wild_points": None,
 
-            "kick_link": None,
-
-            "reason": None
+            "kick_link": None
         }
 
         await show_prize_confirmation(
@@ -7677,6 +7914,10 @@ class PlinkoPrizeModal(
             prize_data
         )
 
+
+# =========================================
+# PLINKO WILD POINTS MODAL
+# =========================================
 
 class PlinkoWildPointsModal(
     discord.ui.Modal,
@@ -7716,9 +7957,9 @@ class PlinkoWildPointsModal(
 
             return
 
-        # -----------------------------------------
+        # =========================================
         # VALIDATE WILD POINTS
-        # -----------------------------------------
+        # =========================================
 
         try:
 
@@ -7734,15 +7975,16 @@ class PlinkoWildPointsModal(
         except ValueError:
 
             await interaction.response.send_message(
-                "❌ Wild Points must be a positive whole number.",
+                "❌ Wild Points must be a positive "
+                "whole number.",
                 ephemeral=True
             )
 
             return
 
-        # -----------------------------------------
-        # CREATE PRIZE DATA
-        # -----------------------------------------
+        # =========================================
+        # PRIZE DATA
+        # =========================================
 
         prize_data = {
 
@@ -7764,14 +8006,8 @@ class PlinkoWildPointsModal(
 
             "wild_points": wild_points,
 
-            "kick_link": None,
-
-            "reason": None
+            "kick_link": None
         }
-
-        # -----------------------------------------
-        # SHOW CONFIRMATION
-        # -----------------------------------------
 
         await show_prize_confirmation(
             interaction,
