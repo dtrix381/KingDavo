@@ -14769,5 +14769,80 @@ async def wildlines_monthly(
                 ephemeral=True
             )
 
+# =========================================
+# CURRENCY CONVERSION
+# =========================================
+
+async def convert_to_usd(
+    amount: float,
+    currency: str
+):
+
+    """
+    Convert a prize amount to USD using
+    the current CAD → USD exchange rate.
+
+    USD:
+        No conversion needed.
+
+    CAD:
+        Uses Frankfurter API to get the
+        current CAD → USD exchange rate.
+    """
+
+    currency = currency.upper().strip()
+
+    # -----------------------------------------
+    # USD
+    # -----------------------------------------
+
+    if currency == "USD":
+
+        return {
+            "original_amount": amount,
+            "original_currency": "USD",
+            "exchange_rate": 1.0,
+            "usd_amount": amount
+        }
+
+    # -----------------------------------------
+    # CAD
+    # -----------------------------------------
+
+    if currency == "CAD":
+
+        url = (
+            "https://api.frankfurter.dev/"
+            "v2/rate/CAD/USD"
+        )
+
+        async with http_session.get(
+            url,
+            timeout=10
+        ) as response:
+
+            response.raise_for_status()
+
+            data = await response.json()
+
+        rate = float(data["rate"])
+
+        usd_amount = amount * rate
+
+        return {
+            "original_amount": amount,
+            "original_currency": "CAD",
+            "exchange_rate": rate,
+            "usd_amount": usd_amount
+        }
+
+    # -----------------------------------------
+    # UNSUPPORTED CURRENCY
+    # -----------------------------------------
+
+    raise ValueError(
+        f"Unsupported currency: {currency}"
+    )
+
 if __name__ == "__main__":
     bot.run(TOKEN)
