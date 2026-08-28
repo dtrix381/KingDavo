@@ -6222,6 +6222,185 @@ def parse_money(value: str):
     except (ValueError, TypeError):
         return None
 
+# =========================================
+# CURRENCY SELECTION VIEW
+# =========================================
+
+class CurrencySelectView(discord.ui.View):
+
+    def __init__(
+        self,
+        winner_id: int,
+        prize_type: str
+    ):
+        super().__init__(timeout=300)
+
+        self.winner_id = winner_id
+        self.prize_type = prize_type
+
+    @discord.ui.select(
+        placeholder="💱 Select prize currency...",
+        min_values=1,
+        max_values=1,
+        options=[
+            discord.SelectOption(
+                label="USD",
+                value="USD",
+                emoji="🇺🇸",
+                description="Prize amount is already in USD"
+            ),
+            discord.SelectOption(
+                label="CAD",
+                value="CAD",
+                emoji="🇨🇦",
+                description="Convert CAD to USD automatically"
+            )
+        ]
+    )
+    async def select_currency(
+        self,
+        interaction: discord.Interaction,
+        select: discord.ui.Select
+    ):
+
+        currency = select.values[0]
+
+        # -----------------------------------------
+        # FREE SPINS
+        # -----------------------------------------
+
+        if self.prize_type in (
+            "Free Spins",
+            "Plinko - Free Spins",
+            "Wheel - Free Spins"
+        ):
+
+            await interaction.response.send_modal(
+                FreeSpinsModal(
+                    self.winner_id,
+                    self.prize_type,
+                    currency
+                )
+            )
+
+        # -----------------------------------------
+        # WHEEL TIP
+        # -----------------------------------------
+
+        elif self.prize_type == "Wheel - Tip":
+
+            await interaction.response.send_modal(
+                TipPrizeModal(
+                    self.winner_id,
+                    self.prize_type,
+                    currency
+                )
+            )
+
+        # -----------------------------------------
+        # CASH TIP
+        # -----------------------------------------
+
+        elif self.prize_type == "Cash Tip":
+
+            await interaction.response.send_modal(
+                CashTipModal(
+                    self.winner_id,
+                    currency
+                )
+            )
+
+        # -----------------------------------------
+        # RAFFLE
+        # -----------------------------------------
+
+        elif self.prize_type == "Raffle":
+
+            await interaction.response.send_modal(
+                RaffleModal(
+                    self.winner_id,
+                    currency
+                )
+            )
+
+        # -----------------------------------------
+        # TOP CHATTER
+        # -----------------------------------------
+
+        elif self.prize_type == "Top Chatter":
+
+            await interaction.response.send_modal(
+                TopChatterModal(
+                    self.winner_id,
+                    currency
+                )
+            )
+
+        # -----------------------------------------
+        # BONUS BUY
+        # -----------------------------------------
+
+        elif self.prize_type == "Bonus Buy":
+
+            await interaction.response.send_modal(
+                BonusBuyModal(
+                    self.winner_id,
+                    currency
+                )
+            )
+
+        # -----------------------------------------
+        # TWITTER GIVEAWAY
+        # -----------------------------------------
+
+        elif self.prize_type == "Twitter Giveaway":
+
+            await interaction.response.send_modal(
+                TwitterGiveawayModal(
+                    self.winner_id,
+                    currency
+                )
+            )
+
+        # -----------------------------------------
+        # GUESS THE BALANCE
+        # -----------------------------------------
+
+        elif self.prize_type == "Guess the Balance":
+
+            await interaction.response.send_modal(
+                GuessBalanceModal(
+                    self.winner_id,
+                    currency
+                )
+            )
+
+        # -----------------------------------------
+        # TOURNAMENT
+        # -----------------------------------------
+
+        elif self.prize_type == "Tournament":
+
+            await interaction.response.send_modal(
+                TournamentModal(
+                    self.winner_id,
+                    currency
+                )
+            )
+
+        # -----------------------------------------
+        # PLINKO PRIZE
+        # -----------------------------------------
+
+        elif self.prize_type == "Plinko Prize":
+
+            await interaction.response.send_modal(
+                PlinkoPrizeModal(
+                    self.winner_id,
+                    currency
+                )
+            )
+
 
 class PrizeMemberSelectView(discord.ui.View):
 
@@ -6251,83 +6430,34 @@ class PrizeMemberSelectView(discord.ui.View):
             )
             return
 
-        if self.prize_type in (
-                "Free Spins",
-                "Plinko - Free Spins",
-                "Wheel - Free Spins"
-        ):
+        # =========================================
+        # PLINKO WILD POINTS
+        # =========================================
+        # Wild Points are not currency, so skip
+        # the USD/CAD selection.
 
-            await interaction.response.send_modal(
-                FreeSpinsModal(
-                    member.id,
-                    self.prize_type
-                )
-            )
-
-        elif self.prize_type == "Wheel - Tip":
-
-            await interaction.response.send_modal(
-                TipPrizeModal(
-                    member.id,
-                    self.prize_type
-                )
-            )
-    
-        elif self.prize_type == "Cash Tip":
-
-            await interaction.response.send_modal(
-                CashTipModal(
-                    member.id
-                )
-            )
-
-        elif self.prize_type == "Raffle":
-
-            await interaction.response.send_modal(
-                RaffleModal(member.id)
-            )
-
-        elif self.prize_type == "Top Chatter":
-
-            await interaction.response.send_modal(
-                TopChatterModal(member.id)
-            )
-            
-        elif self.prize_type == "Bonus Buy":
-
-            await interaction.response.send_modal(
-                BonusBuyModal(member.id)
-            )
-    
-        elif self.prize_type == "Twitter Giveaway":
-
-            await interaction.response.send_modal(
-                TwitterGiveawayModal(member.id)
-            )
-
-        elif self.prize_type == "Guess the Balance":
-
-            await interaction.response.send_modal(
-                GuessBalanceModal(member.id)
-            )
-
-        elif self.prize_type == "Tournament":
-
-            await interaction.response.send_modal(
-                TournamentModal(member.id)
-            )
-
-        elif self.prize_type == "Plinko Prize":
-
-            await interaction.response.send_modal(
-                PlinkoPrizeModal(member.id)
-            )
-
-        elif self.prize_type == "Plinko Wild Points":
-
+        if self.prize_type == "Plinko Wild Points":
             await interaction.response.send_modal(
                 PlinkoWildPointsModal(member.id)
             )
+
+            return
+
+        # =========================================
+        # ALL CASH / MONETARY PRIZES
+        # =========================================
+
+        await interaction.response.edit_message(
+            content=(
+                f"💱 **{self.prize_type}**\n\n"
+                f"Winner: {member.mention}\n\n"
+                "Select the prize currency below."
+            ),
+            view=CurrencySelectView(
+                member.id,
+                self.prize_type
+            )
+        )
 
 class PlinkoChoiceView(discord.ui.View):
 
@@ -6406,11 +6536,13 @@ class CashTipModal(
 
     def __init__(
         self,
-        winner_id: int
+        winner_id: int,
+        currency: str = "USD"
     ):
         super().__init__()
 
         self.winner_id = winner_id
+        self.currency = currency
 
     async def on_submit(
         self,
@@ -6440,14 +6572,14 @@ class CashTipModal(
 
         try:
 
-            prize_value = float(
+            original_amount = float(
                 self.amount.value
                 .replace("$", "")
                 .replace(",", "")
                 .strip()
             )
 
-            if prize_value <= 0:
+            if original_amount <= 0:
                 raise ValueError
 
         except ValueError:
@@ -6459,6 +6591,11 @@ class CashTipModal(
             )
 
             return
+
+        original_amount = round(
+            original_amount,
+            2
+        )
 
         # -----------------------------------------
         # VALIDATE REASON
@@ -6476,10 +6613,45 @@ class CashTipModal(
             return
 
         # -----------------------------------------
+        # CONVERT TO USD
+        # -----------------------------------------
+
+        try:
+
+            conversion = await convert_to_usd(
+                original_amount,
+                self.currency
+            )
+
+        except Exception as e:
+
+            print(
+                f"❌ Currency conversion error: {e}"
+            )
+
+            await interaction.response.send_message(
+                "❌ Unable to get the current currency "
+                "conversion rate. Please try again.",
+                ephemeral=True
+            )
+
+            return
+
+        usd_amount = round(
+            conversion["usd_amount"],
+            2
+        )
+
+        exchange_rate = conversion[
+            "exchange_rate"
+        ]
+
+        # -----------------------------------------
         # CREATE PRIZE DATA
         # -----------------------------------------
 
         prize_data = {
+
             "winner_id": member.id,
             "winner_name": member.display_name,
             "winner_mention": member.mention,
@@ -6490,12 +6662,33 @@ class CashTipModal(
             "quantity": None,
             "bet_size": None,
 
-            "prize_value": prize_value,
+            # -------------------------------------
+            # ORIGINAL CURRENCY
+            # -------------------------------------
+
+            "original_amount": original_amount,
+            "original_currency": self.currency,
+
+            # -------------------------------------
+            # EXCHANGE RATE
+            # -------------------------------------
+
+            "exchange_rate": exchange_rate,
+
+            # -------------------------------------
+            # USD VALUE
+            # -------------------------------------
+
+            "prize_value": usd_amount,
+
             "wild_points": None,
 
             "kick_link": None,
 
-            # New field
+            # -------------------------------------
+            # REASON
+            # -------------------------------------
+
             "reason": reason
         }
 
@@ -6507,7 +6700,8 @@ class CashTipModal(
             interaction,
             prize_data
         )
-        
+
+
 class TipPrizeModal(
     discord.ui.Modal,
     title="💵 Tip Prize"
@@ -6523,17 +6717,23 @@ class TipPrizeModal(
     def __init__(
         self,
         winner_id: int,
-        prize_type: str = "Wheel - Tip"
+        prize_type: str = "Wheel - Tip",
+        currency: str = "USD"
     ):
         super().__init__()
 
         self.winner_id = winner_id
         self.prize_type = prize_type
+        self.currency = currency
 
     async def on_submit(
         self,
         interaction: discord.Interaction
     ):
+
+        # -----------------------------------------
+        # GET MEMBER
+        # -----------------------------------------
 
         member = interaction.guild.get_member(
             self.winner_id
@@ -6554,24 +6754,64 @@ class TipPrizeModal(
 
         try:
 
-            prize_value = float(
+            original_amount = float(
                 self.prize_amount.value
                 .replace("$", "")
+                .replace(",", "")
                 .strip()
             )
 
-            if prize_value <= 0:
+            if original_amount <= 0:
                 raise ValueError
 
         except ValueError:
 
             await interaction.response.send_message(
                 "❌ Tip amount must be a positive number.\n"
-                "Example: `50`",
+                "Example: `50` or `25.50`",
                 ephemeral=True
             )
 
             return
+
+        original_amount = round(
+            original_amount,
+            2
+        )
+
+        # -----------------------------------------
+        # CONVERT TO USD
+        # -----------------------------------------
+
+        try:
+
+            conversion = await convert_to_usd(
+                original_amount,
+                self.currency
+            )
+
+        except Exception as e:
+
+            print(
+                f"❌ Currency conversion error: {e}"
+            )
+
+            await interaction.response.send_message(
+                "❌ Unable to get the current currency "
+                "conversion rate. Please try again.",
+                ephemeral=True
+            )
+
+            return
+
+        usd_amount = round(
+            conversion["usd_amount"],
+            2
+        )
+
+        exchange_rate = conversion[
+            "exchange_rate"
+        ]
 
         # -----------------------------------------
         # CREATE PRIZE DATA
@@ -6580,35 +6820,38 @@ class TipPrizeModal(
         prize_data = {
 
             "winner_id": member.id,
-
             "winner_name": member.display_name,
-
             "winner_mention": member.mention,
 
             "prize_type": self.prize_type,
 
             "slot_name": None,
-
             "quantity": None,
-
             "bet_size": None,
 
-            "prize_value": prize_value,
+            "original_amount": original_amount,
+            "original_currency": self.currency,
+            "exchange_rate": exchange_rate,
+
+            "prize_value": usd_amount,
 
             "wild_points": None,
 
-            "kick_link": None
+            "kick_link": None,
+
+            "reason": None
         }
 
         # -----------------------------------------
-        # SEND TO EXISTING CONFIRMATION SYSTEM
+        # SHOW CONFIRMATION
         # -----------------------------------------
 
         await show_prize_confirmation(
             interaction,
             prize_data
         )
-        
+
+
 class BonusBuyModal(
     discord.ui.Modal,
     title="🎁 Bonus Buy"
@@ -6621,7 +6864,10 @@ class BonusBuyModal(
         max_length=100
     )
 
-    def __init__(self, winner_id: int):
+    def __init__(
+        self,
+        winner_id: int
+    ):
         super().__init__()
 
         self.winner_id = winner_id
@@ -6648,7 +6894,7 @@ class BonusBuyModal(
             self.prize.value
         )
 
-        if prize_value is None:
+        if prize_value is None or prize_value <= 0:
 
             await interaction.response.send_message(
                 "❌ Invalid prize amount.\n"
@@ -6658,7 +6904,13 @@ class BonusBuyModal(
 
             return
 
+        prize_value = round(
+            prize_value,
+            2
+        )
+
         prize_data = {
+
             "winner_id": member.id,
             "winner_name": member.display_name,
             "winner_mention": member.mention,
@@ -6669,17 +6921,25 @@ class BonusBuyModal(
             "quantity": None,
             "bet_size": None,
 
+            "original_amount": prize_value,
+            "original_currency": "USD",
+            "exchange_rate": 1.0,
+
             "prize_value": prize_value,
+
             "wild_points": None,
 
-            "kick_link": None
+            "kick_link": None,
+
+            "reason": None
         }
 
         await show_prize_confirmation(
             interaction,
             prize_data
         )
-        
+
+
 class FreeSpinsModal(
     discord.ui.Modal,
     title="🎰 Free Spins Prize"
@@ -6707,66 +6967,141 @@ class FreeSpinsModal(
     )
 
     def __init__(
-            self,
-            winner_id: int,
-            prize_type: str = "Free Spins"
+        self,
+        winner_id: int,
+        prize_type: str = "Free Spins",
+        currency: str = "USD"
     ):
         super().__init__()
 
         self.winner_id = winner_id
         self.prize_type = prize_type
+        self.currency = currency
 
     async def on_submit(
         self,
         interaction: discord.Interaction
     ):
 
+        # -----------------------------------------
+        # GET MEMBER
+        # -----------------------------------------
+
         member = interaction.guild.get_member(
             self.winner_id
         )
 
         if member is None:
+
             await interaction.response.send_message(
                 "❌ That member is no longer in the server.",
                 ephemeral=True
             )
+
             return
 
+        # -----------------------------------------
+        # VALIDATE QUANTITY
+        # -----------------------------------------
+
         try:
-            quantity = int(self.quantity.value)
+
+            quantity = int(
+                self.quantity.value
+            )
 
             if quantity <= 0:
                 raise ValueError
 
         except ValueError:
+
             await interaction.response.send_message(
                 "❌ Quantity must be a positive whole number.",
                 ephemeral=True
             )
+
             return
 
+        # -----------------------------------------
+        # VALIDATE BET SIZE
+        # -----------------------------------------
+
         try:
+
             bet_size = float(
-                self.bet_size.value.replace("$", "").strip()
+                self.bet_size.value
+                .replace("$", "")
+                .replace(",", "")
+                .strip()
             )
 
             if bet_size <= 0:
                 raise ValueError
 
         except ValueError:
+
             await interaction.response.send_message(
                 "❌ Bet Size must be a positive number.\n"
                 "Example: `0.20`",
                 ephemeral=True
             )
+
             return
 
-        prize_value = round(
+        bet_size = round(
+            bet_size,
+            2
+        )
+
+        # -----------------------------------------
+        # CALCULATE ORIGINAL VALUE
+        # -----------------------------------------
+
+        original_amount = round(
             quantity * bet_size,
             2
         )
 
+        # -----------------------------------------
+        # CONVERT TO USD
+        # -----------------------------------------
+
+        try:
+
+            conversion = await convert_to_usd(
+                original_amount,
+                self.currency
+            )
+
+        except Exception as e:
+
+            print(
+                f"❌ Currency conversion error: {e}"
+            )
+
+            await interaction.response.send_message(
+                "❌ Unable to get the current currency "
+                "conversion rate. Please try again.",
+                ephemeral=True
+            )
+
+            return
+
+        usd_amount = round(
+            conversion["usd_amount"],
+            2
+        )
+
+        exchange_rate = conversion[
+            "exchange_rate"
+        ]
+
+        # -----------------------------------------
+        # CREATE PRIZE DATA
+        # -----------------------------------------
+
         prize_data = {
+
             "winner_id": member.id,
             "winner_name": member.display_name,
             "winner_mention": member.mention,
@@ -6774,19 +7109,46 @@ class FreeSpinsModal(
             "prize_type": self.prize_type,
 
             "slot_name": self.slot.value.strip(),
+
             "quantity": quantity,
+
             "bet_size": bet_size,
 
-            "prize_value": prize_value,
+            # -------------------------------------
+            # ORIGINAL CURRENCY
+            # -------------------------------------
+
+            "original_amount": original_amount,
+            "original_currency": self.currency,
+
+            # -------------------------------------
+            # EXCHANGE RATE
+            # -------------------------------------
+
+            "exchange_rate": exchange_rate,
+
+            # -------------------------------------
+            # USD VALUE
+            # -------------------------------------
+
+            "prize_value": usd_amount,
+
             "wild_points": None,
 
-            "kick_link": None
+            "kick_link": None,
+
+            "reason": None
         }
+
+        # -----------------------------------------
+        # SHOW CONFIRMATION
+        # -----------------------------------------
 
         await show_prize_confirmation(
             interaction,
             prize_data
         )
+
 
 class RaffleModal(
     discord.ui.Modal,
@@ -6800,7 +7162,10 @@ class RaffleModal(
         max_length=100
     )
 
-    def __init__(self, winner_id: int):
+    def __init__(
+        self,
+        winner_id: int
+    ):
         super().__init__()
 
         self.winner_id = winner_id
@@ -6827,7 +7192,7 @@ class RaffleModal(
             self.prize.value
         )
 
-        if prize_value is None:
+        if prize_value is None or prize_value <= 0:
 
             await interaction.response.send_message(
                 "❌ Invalid prize amount.\n"
@@ -6837,7 +7202,13 @@ class RaffleModal(
 
             return
 
+        prize_value = round(
+            prize_value,
+            2
+        )
+
         prize_data = {
+
             "winner_id": member.id,
             "winner_name": member.display_name,
             "winner_mention": member.mention,
@@ -6848,17 +7219,25 @@ class RaffleModal(
             "quantity": None,
             "bet_size": None,
 
+            "original_amount": prize_value,
+            "original_currency": "USD",
+            "exchange_rate": 1.0,
+
             "prize_value": prize_value,
+
             "wild_points": None,
 
-            "kick_link": None
+            "kick_link": None,
+
+            "reason": None
         }
 
         await show_prize_confirmation(
             interaction,
             prize_data
         )
-        
+
+
 class TopChatterModal(
     discord.ui.Modal,
     title="💬 Top Chatter"
@@ -6871,7 +7250,10 @@ class TopChatterModal(
         max_length=100
     )
 
-    def __init__(self, winner_id: int):
+    def __init__(
+        self,
+        winner_id: int
+    ):
         super().__init__()
 
         self.winner_id = winner_id
@@ -6898,7 +7280,7 @@ class TopChatterModal(
             self.prize.value
         )
 
-        if prize_value is None:
+        if prize_value is None or prize_value <= 0:
 
             await interaction.response.send_message(
                 "❌ Invalid prize amount.\n"
@@ -6908,7 +7290,13 @@ class TopChatterModal(
 
             return
 
+        prize_value = round(
+            prize_value,
+            2
+        )
+
         prize_data = {
+
             "winner_id": member.id,
             "winner_name": member.display_name,
             "winner_mention": member.mention,
@@ -6919,17 +7307,25 @@ class TopChatterModal(
             "quantity": None,
             "bet_size": None,
 
+            "original_amount": prize_value,
+            "original_currency": "USD",
+            "exchange_rate": 1.0,
+
             "prize_value": prize_value,
+
             "wild_points": None,
 
-            "kick_link": None
+            "kick_link": None,
+
+            "reason": None
         }
 
         await show_prize_confirmation(
             interaction,
             prize_data
         )
-        
+
+
 class TwitterGiveawayModal(
     discord.ui.Modal,
     title="🐦 Twitter Giveaway"
@@ -6942,7 +7338,10 @@ class TwitterGiveawayModal(
         max_length=100
     )
 
-    def __init__(self, winner_id: int):
+    def __init__(
+        self,
+        winner_id: int
+    ):
         super().__init__()
 
         self.winner_id = winner_id
@@ -6957,25 +7356,35 @@ class TwitterGiveawayModal(
         )
 
         if member is None:
+
             await interaction.response.send_message(
                 "❌ That member is no longer in the server.",
                 ephemeral=True
             )
+
             return
 
         prize_value = parse_money(
             self.prize.value
         )
 
-        if prize_value is None:
+        if prize_value is None or prize_value <= 0:
+
             await interaction.response.send_message(
                 "❌ Invalid prize amount.\n"
                 "Example: `$50`",
                 ephemeral=True
             )
+
             return
 
+        prize_value = round(
+            prize_value,
+            2
+        )
+
         prize_data = {
+
             "winner_id": member.id,
             "winner_name": member.display_name,
             "winner_mention": member.mention,
@@ -6986,10 +7395,17 @@ class TwitterGiveawayModal(
             "quantity": None,
             "bet_size": None,
 
+            "original_amount": prize_value,
+            "original_currency": "USD",
+            "exchange_rate": 1.0,
+
             "prize_value": prize_value,
+
             "wild_points": None,
 
-            "kick_link": None
+            "kick_link": None,
+
+            "reason": None
         }
 
         await show_prize_confirmation(
@@ -7010,7 +7426,10 @@ class GuessBalanceModal(
         max_length=100
     )
 
-    def __init__(self, winner_id: int):
+    def __init__(
+        self,
+        winner_id: int
+    ):
         super().__init__()
 
         self.winner_id = winner_id
@@ -7025,25 +7444,35 @@ class GuessBalanceModal(
         )
 
         if member is None:
+
             await interaction.response.send_message(
                 "❌ That member is no longer in the server.",
                 ephemeral=True
             )
+
             return
 
         prize_value = parse_money(
             self.prize.value
         )
 
-        if prize_value is None:
+        if prize_value is None or prize_value <= 0:
+
             await interaction.response.send_message(
                 "❌ Invalid prize amount.\n"
                 "Example: `$100`",
                 ephemeral=True
             )
+
             return
 
+        prize_value = round(
+            prize_value,
+            2
+        )
+
         prize_data = {
+
             "winner_id": member.id,
             "winner_name": member.display_name,
             "winner_mention": member.mention,
@@ -7054,10 +7483,17 @@ class GuessBalanceModal(
             "quantity": None,
             "bet_size": None,
 
+            "original_amount": prize_value,
+            "original_currency": "USD",
+            "exchange_rate": 1.0,
+
             "prize_value": prize_value,
+
             "wild_points": None,
 
-            "kick_link": None
+            "kick_link": None,
+
+            "reason": None
         }
 
         await show_prize_confirmation(
@@ -7078,7 +7514,10 @@ class TournamentModal(
         max_length=100
     )
 
-    def __init__(self, winner_id: int):
+    def __init__(
+        self,
+        winner_id: int
+    ):
         super().__init__()
 
         self.winner_id = winner_id
@@ -7093,25 +7532,35 @@ class TournamentModal(
         )
 
         if member is None:
+
             await interaction.response.send_message(
                 "❌ That member is no longer in the server.",
                 ephemeral=True
             )
+
             return
 
         prize_value = parse_money(
             self.prize.value
         )
 
-        if prize_value is None:
+        if prize_value is None or prize_value <= 0:
+
             await interaction.response.send_message(
                 "❌ Invalid prize amount.\n"
                 "Example: `$250`",
                 ephemeral=True
             )
+
             return
 
+        prize_value = round(
+            prize_value,
+            2
+        )
+
         prize_data = {
+
             "winner_id": member.id,
             "winner_name": member.display_name,
             "winner_mention": member.mention,
@@ -7122,10 +7571,17 @@ class TournamentModal(
             "quantity": None,
             "bet_size": None,
 
+            "original_amount": prize_value,
+            "original_currency": "USD",
+            "exchange_rate": 1.0,
+
             "prize_value": prize_value,
+
             "wild_points": None,
 
-            "kick_link": None
+            "kick_link": None,
+
+            "reason": None
         }
 
         await show_prize_confirmation(
@@ -7146,7 +7602,10 @@ class PlinkoPrizeModal(
         max_length=100
     )
 
-    def __init__(self, winner_id: int):
+    def __init__(
+        self,
+        winner_id: int
+    ):
         super().__init__()
 
         self.winner_id = winner_id
@@ -7161,25 +7620,35 @@ class PlinkoPrizeModal(
         )
 
         if member is None:
+
             await interaction.response.send_message(
                 "❌ That member is no longer in the server.",
                 ephemeral=True
             )
+
             return
 
         prize_value = parse_money(
             self.prize.value
         )
 
-        if prize_value is None:
+        if prize_value is None or prize_value <= 0:
+
             await interaction.response.send_message(
                 "❌ Invalid prize amount.\n"
                 "Example: `$50`",
                 ephemeral=True
             )
+
             return
 
+        prize_value = round(
+            prize_value,
+            2
+        )
+
         prize_data = {
+
             "winner_id": member.id,
             "winner_name": member.display_name,
             "winner_mention": member.mention,
@@ -7190,16 +7659,24 @@ class PlinkoPrizeModal(
             "quantity": None,
             "bet_size": None,
 
+            "original_amount": prize_value,
+            "original_currency": "USD",
+            "exchange_rate": 1.0,
+
             "prize_value": prize_value,
+
             "wild_points": None,
 
-            "kick_link": None
+            "kick_link": None,
+
+            "reason": None
         }
 
         await show_prize_confirmation(
             interaction,
             prize_data
         )
+
 
 class PlinkoWildPointsModal(
     discord.ui.Modal,
@@ -7213,7 +7690,10 @@ class PlinkoWildPointsModal(
         max_length=20
     )
 
-    def __init__(self, winner_id: int):
+    def __init__(
+        self,
+        winner_id: int
+    ):
         super().__init__()
 
         self.winner_id = winner_id
@@ -7228,28 +7708,44 @@ class PlinkoWildPointsModal(
         )
 
         if member is None:
+
             await interaction.response.send_message(
                 "❌ That member is no longer in the server.",
                 ephemeral=True
             )
+
             return
 
+        # -----------------------------------------
+        # VALIDATE WILD POINTS
+        # -----------------------------------------
+
         try:
+
             wild_points = int(
-                self.wild_points.value.replace(",", "").strip()
+                self.wild_points.value
+                .replace(",", "")
+                .strip()
             )
 
             if wild_points <= 0:
                 raise ValueError
 
         except ValueError:
+
             await interaction.response.send_message(
                 "❌ Wild Points must be a positive whole number.",
                 ephemeral=True
             )
+
             return
 
+        # -----------------------------------------
+        # CREATE PRIZE DATA
+        # -----------------------------------------
+
         prize_data = {
+
             "winner_id": member.id,
             "winner_name": member.display_name,
             "winner_mention": member.mention,
@@ -7260,9 +7756,22 @@ class PlinkoWildPointsModal(
             "quantity": None,
             "bet_size": None,
 
+            "original_amount": None,
+            "original_currency": None,
+            "exchange_rate": None,
+
             "prize_value": None,
-            "wild_points": wild_points
+
+            "wild_points": wild_points,
+
+            "kick_link": None,
+
+            "reason": None
         }
+
+        # -----------------------------------------
+        # SHOW CONFIRMATION
+        # -----------------------------------------
 
         await show_prize_confirmation(
             interaction,
@@ -7277,6 +7786,10 @@ class PrizeConfirmationView(discord.ui.View):
 
         self.prize_data = prize_data
 
+    # =========================================
+    # YES — CONFIRM PRIZE
+    # =========================================
+
     @discord.ui.button(
         label="Yes",
         emoji="✅",
@@ -7288,7 +7801,10 @@ class PrizeConfirmationView(discord.ui.View):
         button: discord.ui.Button
     ):
 
-        # Disable buttons immediately
+        # -----------------------------------------
+        # DISABLE BUTTONS IMMEDIATELY
+        # -----------------------------------------
+
         for item in self.children:
             item.disabled = True
 
@@ -7298,10 +7814,18 @@ class PrizeConfirmationView(discord.ui.View):
             view=self
         )
 
+        # -----------------------------------------
+        # CREATE PENDING PRIZE
+        # -----------------------------------------
+
         await create_pending_prize(
             interaction,
             self.prize_data
         )
+
+    # =========================================
+    # NO — EDIT PRIZE
+    # =========================================
 
     @discord.ui.button(
         label="No",
@@ -7315,22 +7839,40 @@ class PrizeConfirmationView(discord.ui.View):
     ):
 
         prize_type = self.prize_data["prize_type"]
+
         winner_id = self.prize_data["winner_id"]
+
+        # -----------------------------------------
+        # GET CURRENT CURRENCY
+        # -----------------------------------------
+        #
+        # Keep the previously selected currency
+        # when reopening the modal.
+        #
+        # Defaults to USD for older prize_data
+        # that does not contain currency yet.
+        # -----------------------------------------
+
+        currency = self.prize_data.get(
+            "original_currency",
+            "USD"
+        )
 
         # -----------------------------------------
         # FREE SPINS
         # -----------------------------------------
 
         if prize_type in (
-                "Free Spins",
-                "Plinko - Free Spins",
-                "Wheel - Free Spins"
+            "Free Spins",
+            "Plinko - Free Spins",
+            "Wheel - Free Spins"
         ):
 
             await interaction.response.send_modal(
                 FreeSpinsModal(
                     winner_id,
-                    prize_type
+                    prize_type,
+                    currency
                 )
             )
 
@@ -7343,7 +7885,8 @@ class PrizeConfirmationView(discord.ui.View):
             await interaction.response.send_modal(
                 TipPrizeModal(
                     winner_id,
-                    prize_type
+                    prize_type,
+                    currency
                 )
             )
 
@@ -7355,7 +7898,8 @@ class PrizeConfirmationView(discord.ui.View):
 
             await interaction.response.send_modal(
                 CashTipModal(
-                    winner_id
+                    winner_id,
+                    currency
                 )
             )
 
@@ -7366,7 +7910,10 @@ class PrizeConfirmationView(discord.ui.View):
         elif prize_type == "Raffle":
 
             await interaction.response.send_modal(
-                RaffleModal(winner_id)
+                RaffleModal(
+                    winner_id,
+                    currency
+                )
             )
 
         # -----------------------------------------
@@ -7376,7 +7923,10 @@ class PrizeConfirmationView(discord.ui.View):
         elif prize_type == "Top Chatter":
 
             await interaction.response.send_modal(
-                TopChatterModal(winner_id)
+                TopChatterModal(
+                    winner_id,
+                    currency
+                )
             )
 
         # -----------------------------------------
@@ -7386,7 +7936,10 @@ class PrizeConfirmationView(discord.ui.View):
         elif prize_type == "Bonus Buy":
 
             await interaction.response.send_modal(
-                BonusBuyModal(winner_id)
+                BonusBuyModal(
+                    winner_id,
+                    currency
+                )
             )
 
         # -----------------------------------------
@@ -7396,7 +7949,10 @@ class PrizeConfirmationView(discord.ui.View):
         elif prize_type == "Twitter Giveaway":
 
             await interaction.response.send_modal(
-                TwitterGiveawayModal(winner_id)
+                TwitterGiveawayModal(
+                    winner_id,
+                    currency
+                )
             )
 
         # -----------------------------------------
@@ -7406,7 +7962,10 @@ class PrizeConfirmationView(discord.ui.View):
         elif prize_type == "Guess the Balance":
 
             await interaction.response.send_modal(
-                GuessBalanceModal(winner_id)
+                GuessBalanceModal(
+                    winner_id,
+                    currency
+                )
             )
 
         # -----------------------------------------
@@ -7416,7 +7975,10 @@ class PrizeConfirmationView(discord.ui.View):
         elif prize_type == "Tournament":
 
             await interaction.response.send_modal(
-                TournamentModal(winner_id)
+                TournamentModal(
+                    winner_id,
+                    currency
+                )
             )
 
         # -----------------------------------------
@@ -7424,12 +7986,16 @@ class PrizeConfirmationView(discord.ui.View):
         # -----------------------------------------
 
         elif prize_type in (
-                "Plinko Wild Points",
-                "Plinko"
-        ) and self.prize_data.get("wild_points") is not None:
+            "Plinko Wild Points",
+            "Plinko"
+        ) and self.prize_data.get(
+            "wild_points"
+        ) is not None:
 
             await interaction.response.send_modal(
-                PlinkoWildPointsModal(winner_id)
+                PlinkoWildPointsModal(
+                    winner_id
+                )
             )
 
         # -----------------------------------------
@@ -7437,12 +8003,15 @@ class PrizeConfirmationView(discord.ui.View):
         # -----------------------------------------
 
         elif prize_type in (
-                "Plinko Prize",
-                "Plinko"
+            "Plinko Prize",
+            "Plinko"
         ):
 
             await interaction.response.send_modal(
-                PlinkoPrizeModal(winner_id)
+                PlinkoPrizeModal(
+                    winner_id,
+                    currency
+                )
             )
 
 @bot.tree.command(
@@ -7544,67 +8113,198 @@ async def show_prize_confirmation(
         color=discord.Color.orange()
     )
 
+    # =========================================
+    # WINNER
+    # =========================================
+
     embed.add_field(
         name="👤 Winner",
         value=prize_data["winner_mention"],
         inline=False
     )
 
+    # =========================================
+    # PRIZE TYPE
+    # =========================================
+
+    prize_type = prize_data["prize_type"]
+
     embed.add_field(
         name="🎁 Prize Type",
-        value=prize_data["prize_type"],
+        value=prize_type,
         inline=True
     )
 
-    # Free Spins
-    if prize_data["prize_type"] in (
-            "Free Spins",
-            "Plinko - Free Spins",
-            "Wheel - Free Spins"
+    # =========================================
+    # FREE SPINS
+    # =========================================
+
+    if prize_type in (
+        "Free Spins",
+        "Plinko - Free Spins",
+        "Wheel - Free Spins"
     ):
 
         embed.add_field(
             name="🎰 Slot",
-            value=prize_data["slot_name"],
+            value=prize_data.get(
+                "slot_name",
+                "N/A"
+            ),
             inline=True
         )
 
         embed.add_field(
             name="🔢 Quantity",
-            value=str(prize_data["quantity"]),
+            value=str(
+                prize_data.get(
+                    "quantity",
+                    0
+                )
+            ),
             inline=True
         )
+
+        # -----------------------------------------
+        # ORIGINAL CURRENCY
+        # -----------------------------------------
+
+        original_currency = prize_data.get(
+            "original_currency",
+            "USD"
+        )
+
+        # -----------------------------------------
+        # BET SIZE
+        # -----------------------------------------
+
+        bet_size = prize_data.get(
+            "bet_size"
+        )
+
+        if bet_size is not None:
+
+            bet_size_display = (
+                f"${bet_size:.2f} "
+                f"{original_currency}"
+            )
+
+        else:
+
+            bet_size_display = "N/A"
 
         embed.add_field(
             name="💵 Bet Size",
-            value=f"${prize_data['bet_size']:.2f}",
+            value=bet_size_display,
             inline=True
         )
+
+        # -----------------------------------------
+        # TOTAL PRIZE VALUE
+        # -----------------------------------------
+
+        original_amount = prize_data.get(
+            "original_amount"
+        )
+
+        usd_amount = prize_data.get(
+            "prize_value"
+        )
+
+        if usd_amount is None:
+
+            total_prize_display = "N/A"
+
+        elif (
+            original_amount is not None
+            and original_currency != "USD"
+        ):
+
+            total_prize_display = (
+                f"${original_amount:.2f} "
+                f"{original_currency}\n"
+                f"**${usd_amount:.2f} USD**"
+            )
+
+        else:
+
+            total_prize_display = (
+                f"**${usd_amount:.2f} USD**"
+            )
 
         embed.add_field(
             name="💰 Total Prize Value",
-            value=f"${prize_data['prize_value']:.2f}",
+            value=total_prize_display,
             inline=True
         )
 
-    # Cash prizes
-    elif prize_data["prize_value"] is not None:
+    # =========================================
+    # CASH / OTHER MONETARY PRIZES
+    # =========================================
+
+    elif prize_data.get("prize_value") is not None:
+
+        original_amount = prize_data.get(
+            "original_amount"
+        )
+
+        original_currency = prize_data.get(
+            "original_currency",
+            "USD"
+        )
+
+        usd_amount = prize_data.get(
+            "prize_value"
+        )
+
+        # -----------------------------------------
+        # CONVERTED CURRENCY
+        # -----------------------------------------
+
+        if (
+            original_amount is not None
+            and original_currency != "USD"
+        ):
+
+            prize_display = (
+                f"${original_amount:.2f} "
+                f"{original_currency}\n"
+                f"**${usd_amount:.2f} USD**"
+            )
+
+        # -----------------------------------------
+        # USD
+        # -----------------------------------------
+
+        else:
+
+            prize_display = (
+                f"**${usd_amount:.2f} USD**"
+            )
 
         embed.add_field(
             name="💰 Prize",
-            value=f"${prize_data['prize_value']:.2f}",
+            value=prize_display,
             inline=True
         )
 
+        # -----------------------------------------
+        # REASON
+        # -----------------------------------------
+
         if prize_data.get("reason"):
+
             embed.add_field(
                 name="📝 Reason",
                 value=prize_data["reason"],
                 inline=False
             )
 
-    # Wild Points
-    elif prize_data["wild_points"] is not None:
+    # =========================================
+    # WILD POINTS
+    # =========================================
+
+    elif prize_data.get("wild_points") is not None:
 
         embed.add_field(
             name="💎 Wild Points",
@@ -7612,20 +8312,31 @@ async def show_prize_confirmation(
             inline=True
         )
 
+    # =========================================
+    # FOOTER
+    # =========================================
+
     embed.set_footer(
         text="Is all of the information correct?"
     )
 
+    # =========================================
+    # CONFIRMATION VIEW
+    # =========================================
+
     view = PrizeConfirmationView(
         prize_data
     )
+
+    # =========================================
+    # SEND CONFIRMATION
+    # =========================================
 
     await interaction.response.send_message(
         embed=embed,
         view=view,
         ephemeral=True
     )
-
 
 async def reopen_prize_form(
     interaction: discord.Interaction,
@@ -7738,13 +8449,30 @@ async def create_pending_prize(
     )
 
     # -----------------------------------------
+    # CURRENCY INFORMATION
+    # -----------------------------------------
+
+    original_amount = prize_data.get(
+        "original_amount"
+    )
+
+    original_currency = prize_data.get(
+        "original_currency",
+        "USD"
+    )
+
+    usd_amount = prize_data.get(
+        "prize_value"
+    )
+
+    # -----------------------------------------
     # FREE SPINS
     # -----------------------------------------
 
     if prize_data["prize_type"] in (
-            "Free Spins",
-            "Plinko - Free Spins",
-            "Wheel - Free Spins"
+        "Free Spins",
+        "Plinko - Free Spins",
+        "Wheel - Free Spins"
     ):
 
         embed.add_field(
@@ -7759,15 +8487,39 @@ async def create_pending_prize(
             inline=True
         )
 
+        # -------------------------------------
+        # BET SIZE
+        # -------------------------------------
+
         embed.add_field(
             name="💵 Bet Size",
-            value=f"${prize_data['bet_size']:.2f}",
+            value=(
+                f"${prize_data['bet_size']:.2f} "
+                f"{original_currency}"
+            ),
             inline=True
         )
 
+        # -------------------------------------
+        # TOTAL PRIZE VALUE
+        # -------------------------------------
+
+        if original_currency == "CAD":
+
+            total_prize_display = (
+                f"${original_amount:.2f} CAD "
+                f"(${usd_amount:.2f} USD)"
+            )
+
+        else:
+
+            total_prize_display = (
+                f"${usd_amount:.2f} USD"
+            )
+
         embed.add_field(
             name="💰 Total Prize Value",
-            value=f"${prize_data['prize_value']:.2f}",
+            value=total_prize_display,
             inline=True
         )
 
@@ -7777,9 +8529,22 @@ async def create_pending_prize(
 
     elif prize_data["prize_type"] == "Cash Tip":
 
+        if original_currency == "CAD":
+
+            amount_display = (
+                f"${original_amount:.2f} CAD "
+                f"(${usd_amount:.2f} USD)"
+            )
+
+        else:
+
+            amount_display = (
+                f"${usd_amount:.2f} USD"
+            )
+
         embed.add_field(
             name="💵 Amount",
-            value=f"${prize_data['prize_value']:.2f}",
+            value=amount_display,
             inline=True
         )
 
@@ -7795,11 +8560,24 @@ async def create_pending_prize(
     # OTHER CASH PRIZES
     # -----------------------------------------
 
-    elif prize_data.get("prize_value") is not None:
+    elif usd_amount is not None:
+
+        if original_currency == "CAD":
+
+            prize_display = (
+                f"${original_amount:.2f} CAD "
+                f"(${usd_amount:.2f} USD)"
+            )
+
+        else:
+
+            prize_display = (
+                f"${usd_amount:.2f} USD"
+            )
 
         embed.add_field(
             name="💰 Prize",
-            value=f"${prize_data['prize_value']:.2f}",
+            value=prize_display,
             inline=True
         )
 
@@ -7875,6 +8653,11 @@ async def save_pending_prize(
                 slot_name,
                 quantity,
                 bet_size,
+
+                original_amount,
+                original_currency,
+                exchange_rate,
+
                 prize_value,
                 wild_points,
                 kick_link,
@@ -7888,31 +8671,63 @@ async def save_pending_prize(
                 month,
                 year
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+
+            VALUES (
+                ?, ?, ?, ?, ?, ?,
+                ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
             """,
             (
+                # -----------------------------------------
+                # BASIC PRIZE DATA
+                # -----------------------------------------
+
                 prize_data["winner_id"],
                 prize_data["winner_name"],
                 prize_data["prize_type"],
                 prize_data.get("slot_name"),
                 prize_data.get("quantity"),
                 prize_data.get("bet_size"),
+
+                # -----------------------------------------
+                # ORIGINAL CURRENCY
+                # -----------------------------------------
+
+                prize_data.get("original_amount"),
+                prize_data.get("original_currency", "USD"),
+                prize_data.get("exchange_rate"),
+
+                # -----------------------------------------
+                # USD VALUE
+                # -----------------------------------------
+
                 prize_data.get("prize_value"),
+
+                # -----------------------------------------
+                # OTHER DATA
+                # -----------------------------------------
+
                 prize_data.get("wild_points"),
                 prize_data.get("kick_link"),
                 prize_data.get("reason"),
+
                 None,
                 "pending",
+
                 channel_id,
                 message_id,
+
                 created_at,
                 None,
+
                 now.month,
                 now.year
             )
         )
 
         await db.commit()
+
 
 
 class PrizeApprovalView(discord.ui.View):
@@ -8013,10 +8828,19 @@ async def approve_prize(
                 slot_name,
                 quantity,
                 bet_size,
+
+                -- USD value stored in database
                 prize_value,
+
                 wild_points,
                 kick_link,
                 reason,
+
+                -- Currency information
+                original_amount,
+                original_currency,
+                exchange_rate,
+
                 approved_by,
                 status,
                 pending_channel_id,
@@ -8025,9 +8849,12 @@ async def approve_prize(
                 approved_at,
                 month,
                 year
+
             FROM prize_awards
+
             WHERE pending_message_id = ?
             AND status = 'pending'
+
             LIMIT 1
             """,
             (message_id,)
@@ -8036,6 +8863,10 @@ async def approve_prize(
         row = await cursor.fetchone()
 
         await cursor.close()
+
+        # -----------------------------------------
+        # NO PENDING PRIZE
+        # -----------------------------------------
 
         if row is None:
 
@@ -8054,10 +8885,19 @@ async def approve_prize(
             slot_name,
             quantity,
             bet_size,
+
+            # USD value
             prize_value,
+
             wild_points,
             kick_link,
             reason,
+
+            # Currency information
+            original_amount,
+            original_currency,
+            exchange_rate,
+
             old_approved_by,
             status,
             pending_channel_id,
@@ -8066,6 +8906,7 @@ async def approve_prize(
             old_approved_at,
             old_month,
             old_year
+
         ) = row
 
         # -----------------------------------------
@@ -8091,6 +8932,7 @@ async def approve_prize(
                 approved_at = ?,
                 month = ?,
                 year = ?
+
             WHERE id = ?
             """,
             (
@@ -8105,15 +8947,20 @@ async def approve_prize(
         await db.commit()
 
         # -----------------------------------------
-        # RECORD MONTHLY PRIZE
+        # RECORD MONTHLY / PLAYER PRIZE
         # -----------------------------------------
 
         await record_prize_totals(
             winner_id=winner_id,
             winner_name=winner_name,
             prize_type=prize_type,
+
+            # IMPORTANT:
+            # This is already the USD value.
             prize_value=prize_value or 0,
+
             wild_points=wild_points or 0,
+
             quantity=quantity,
             bet_size=bet_size
         )
@@ -8124,17 +8971,32 @@ async def approve_prize(
 
     await log_prize_sent(
         interaction.guild,
+
         winner_id=winner_id,
         winner_name=winner_name,
+
         prize_type=prize_type,
+
         slot_name=slot_name,
         quantity=quantity,
         bet_size=bet_size,
+
+        # USD value
         prize_value=prize_value,
+
         wild_points=wild_points,
+
         kick_link=kick_link,
         reason=reason,
-        approved_by=approver
+
+        approved_by=approver,
+
+        # -------------------------------------
+        # ORIGINAL CURRENCY INFORMATION
+        # -------------------------------------
+
+        original_amount=original_amount,
+        original_currency=original_currency or "USD"
     )
 
     # -----------------------------------------
@@ -8176,7 +9038,9 @@ async def log_prize_sent(
     wild_points: int | None,
     kick_link: str | None,
     reason: str | None,
-    approved_by: discord.Member
+    approved_by: discord.Member,
+    original_amount: float | None = None,
+    original_currency: str = "USD"
 ):
 
     channel = guild.get_channel(
@@ -8189,11 +9053,8 @@ async def log_prize_sent(
     winner = guild.get_member(winner_id)
 
     if winner:
-
         winner_text = winner.mention
-
     else:
-
         winner_text = f"<@{winner_id}>"
 
     embed = discord.Embed(
@@ -8205,18 +9066,28 @@ async def log_prize_sent(
         timestamp=datetime.now(timezone.utc)
     )
 
-    winner = guild.get_member(winner_id)
+    # -----------------------------------------
+    # WINNER THUMBNAIL
+    # -----------------------------------------
 
     if winner:
         embed.set_thumbnail(
             url=winner.display_avatar.url
         )
 
+    # -----------------------------------------
+    # WINNER
+    # -----------------------------------------
+
     embed.add_field(
         name="👤 Winner",
         value=winner_text,
         inline=False
     )
+
+    # -----------------------------------------
+    # PRIZE TYPE
+    # -----------------------------------------
 
     embed.add_field(
         name="🎁 Prize Type",
@@ -8229,9 +9100,9 @@ async def log_prize_sent(
     # -----------------------------------------
 
     if prize_type in (
-            "Free Spins",
-            "Plinko - Free Spins",
-            "Wheel - Free Spins"
+        "Free Spins",
+        "Plinko - Free Spins",
+        "Wheel - Free Spins"
     ):
 
         embed.add_field(
@@ -8246,19 +9117,41 @@ async def log_prize_sent(
             inline=True
         )
 
+        # -------------------------------------
+        # BET SIZE
+        # -------------------------------------
+
         embed.add_field(
             name="💵 Bet Size",
-            value=f"${bet_size:.2f}"
+            value=(
+                f"${bet_size:.2f} "
+                f"{original_currency}"
+            )
             if bet_size is not None
             else "N/A",
             inline=True
         )
 
+        # -------------------------------------
+        # PRIZE VALUE
+        # -------------------------------------
+
+        if original_currency == "CAD":
+
+            prize_display = (
+                f"${original_amount:.2f} CAD "
+                f"(${prize_value:.2f} USD)"
+            )
+
+        else:
+
+            prize_display = (
+                f"${prize_value:.2f} USD"
+            )
+
         embed.add_field(
             name="💰 Prize Value",
-            value=f"${prize_value:.2f}"
-            if prize_value is not None
-            else "N/A",
+            value=prize_display,
             inline=True
         )
 
@@ -8268,15 +9161,27 @@ async def log_prize_sent(
 
     elif prize_type == "Cash Tip":
 
+        if original_currency == "CAD":
+
+            amount_display = (
+                f"${original_amount:.2f} CAD "
+                f"(${prize_value:.2f} USD)"
+            )
+
+        else:
+
+            amount_display = (
+                f"${prize_value:.2f} USD"
+            )
+
         embed.add_field(
             name="💵 Amount",
-            value=f"${prize_value:.2f}"
-            if prize_value is not None
-            else "N/A",
+            value=amount_display,
             inline=True
         )
 
         if reason:
+
             embed.add_field(
                 name="📝 Reason",
                 value=reason,
@@ -8289,9 +9194,22 @@ async def log_prize_sent(
 
     elif prize_value is not None:
 
+        if original_currency == "CAD":
+
+            prize_display = (
+                f"${original_amount:.2f} CAD "
+                f"(${prize_value:.2f} USD)"
+            )
+
+        else:
+
+            prize_display = (
+                f"${prize_value:.2f} USD"
+            )
+
         embed.add_field(
             name="💰 Prize",
-            value=f"${prize_value:.2f}",
+            value=prize_display,
             inline=True
         )
 
@@ -8329,14 +9247,21 @@ async def log_prize_sent(
         inline=False
     )
 
+    # -----------------------------------------
+    # FOOTER
+    # -----------------------------------------
+
     embed.set_footer(
         text="WildLines Stream Prizes"
     )
 
+    # -----------------------------------------
+    # SEND LOG
+    # -----------------------------------------
+
     await channel.send(
         embed=embed
     )
-
 
 class PrizeDeniedConfirmationView(
     discord.ui.View
@@ -8688,25 +9613,33 @@ async def record_prize_totals(
     tournament = 0.0
     raffle = 0.0
     top_chatter = 0.0
+    bonus_buy = 0.0
     plinko_prize = 0.0
     plinko_wild_points = 0
     wild_tag = 0.0
     wheel = 0.0
     cash_tip = 0.0
+
     total_prize_value = 0.0
 
     # -----------------------------------------
     # FREE SPINS
     # -----------------------------------------
+    #
+    # IMPORTANT:
+    # prize_value is already the USD-converted
+    # amount calculated by FreeSpinsModal.
+    #
+    # Therefore we use prize_value here instead
+    # of quantity * bet_size.
+    # -----------------------------------------
 
     if prize_type in (
-            "Free Spins",
-            "Plinko - Free Spins"
+        "Free Spins",
+        "Plinko - Free Spins"
     ):
 
-        if quantity is not None and bet_size is not None:
-
-            free_spins = quantity * bet_size
+        free_spins = prize_value or 0
 
         total_prize_value = free_spins
 
@@ -8716,8 +9649,9 @@ async def record_prize_totals(
 
     elif prize_type == "Twitter Giveaway":
 
-        twitter_giveaway = prize_value
-        total_prize_value = prize_value
+        twitter_giveaway = prize_value or 0
+
+        total_prize_value = twitter_giveaway
 
     # -----------------------------------------
     # GUESS THE BALANCE
@@ -8725,8 +9659,9 @@ async def record_prize_totals(
 
     elif prize_type == "Guess the Balance":
 
-        guess_balance = prize_value
-        total_prize_value = prize_value
+        guess_balance = prize_value or 0
+
+        total_prize_value = guess_balance
 
     # -----------------------------------------
     # TOURNAMENT
@@ -8734,8 +9669,9 @@ async def record_prize_totals(
 
     elif prize_type == "Tournament":
 
-        tournament = prize_value
-        total_prize_value = prize_value
+        tournament = prize_value or 0
+
+        total_prize_value = tournament
 
     # -----------------------------------------
     # RAFFLE
@@ -8743,8 +9679,9 @@ async def record_prize_totals(
 
     elif prize_type == "Raffle":
 
-        raffle = prize_value
-        total_prize_value = prize_value
+        raffle = prize_value or 0
+
+        total_prize_value = raffle
 
     # -----------------------------------------
     # TOP CHATTER
@@ -8752,8 +9689,19 @@ async def record_prize_totals(
 
     elif prize_type == "Top Chatter":
 
-        top_chatter = prize_value
-        total_prize_value = prize_value
+        top_chatter = prize_value or 0
+
+        total_prize_value = top_chatter
+
+    # -----------------------------------------
+    # BONUS BUY
+    # -----------------------------------------
+
+    elif prize_type == "Bonus Buy":
+
+        bonus_buy = prize_value or 0
+
+        total_prize_value = bonus_buy
 
     # -----------------------------------------
     # PLINKO
@@ -8761,14 +9709,23 @@ async def record_prize_totals(
 
     elif prize_type == "Plinko":
 
+        # -------------------------------------
+        # PLINKO WILD POINTS
+        # -------------------------------------
+
         if wild_points and wild_points > 0:
 
             plinko_wild_points = wild_points
 
+        # -------------------------------------
+        # PLINKO CASH PRIZE
+        # -------------------------------------
+
         elif prize_value:
 
             plinko_prize = prize_value
-            total_prize_value = prize_value
+
+            total_prize_value = plinko_prize
 
     # -----------------------------------------
     # SERVER TAG - FREE SPINS
@@ -8777,10 +9734,10 @@ async def record_prize_totals(
     elif prize_type == "Server Tag - Free Spins":
 
         if quantity is not None and bet_size is not None:
+
             wild_tag = quantity * bet_size
 
         total_prize_value = wild_tag
-
 
     # -----------------------------------------
     # SERVER TAG - TIP
@@ -8791,7 +9748,7 @@ async def record_prize_totals(
         wild_tag = prize_value or 0
 
         total_prize_value = wild_tag
-        
+
     # -----------------------------------------
     # WHEEL - FREE SPINS
     # -----------------------------------------
@@ -8799,10 +9756,10 @@ async def record_prize_totals(
     elif prize_type == "Wheel - Free Spins":
 
         if quantity is not None and bet_size is not None:
+
             wheel = quantity * bet_size
 
         total_prize_value = wheel
-
 
     # -----------------------------------------
     # WHEEL - TIP
@@ -8813,7 +9770,7 @@ async def record_prize_totals(
         wheel = prize_value or 0
 
         total_prize_value = wheel
-        
+
     # -----------------------------------------
     # CASH TIP
     # -----------------------------------------
@@ -8823,36 +9780,48 @@ async def record_prize_totals(
         cash_tip = prize_value or 0
 
         total_prize_value = cash_tip
-        
+
     # -----------------------------------------
     # DATABASE
     # -----------------------------------------
 
     async with aiosqlite.connect(DB_PATH) as db:
 
-        # =====================================
+        # =========================================
         # MONTHLY TOTALS
-        # =====================================
+        # =========================================
 
         await db.execute(
             """
             INSERT INTO prize_monthly_totals (
                 year,
                 month,
+
                 free_spins,
                 twitter_giveaway,
                 guess_balance,
                 tournament,
                 raffle,
                 top_chatter,
+                bonus_buy,
+
                 plinko_prize,
                 plinko_wild_points,
+
                 wild_tag,
                 wheel,
                 cash_tip,
+
                 total_prize_value
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (
+                ?, ?,
+                ?, ?, ?, ?, ?,
+                ?, ?, ?,
+                ?, ?,
+                ?, ?, ?,
+                ?
+            )
 
             ON CONFLICT(year, month)
             DO UPDATE SET
@@ -8875,66 +9844,88 @@ async def record_prize_totals(
                 top_chatter =
                     top_chatter + excluded.top_chatter,
 
+                bonus_buy =
+                    bonus_buy + excluded.bonus_buy,
+
                 plinko_prize =
                     plinko_prize + excluded.plinko_prize,
 
                 plinko_wild_points =
-                    plinko_wild_points + excluded.plinko_wild_points,
+                    plinko_wild_points
+                    + excluded.plinko_wild_points,
 
                 wild_tag =
                     wild_tag + excluded.wild_tag,
-                    
+
                 wheel =
                     wheel + excluded.wheel,
 
                 cash_tip =
                     cash_tip + excluded.cash_tip,
-    
+
                 total_prize_value =
-                    total_prize_value + excluded.total_prize_value
+                    total_prize_value
+                    + excluded.total_prize_value
             """,
             (
                 year,
                 month,
+
                 free_spins,
                 twitter_giveaway,
                 guess_balance,
                 tournament,
                 raffle,
                 top_chatter,
+                bonus_buy,
+
                 plinko_prize,
                 plinko_wild_points,
+
                 wild_tag,
                 wheel,
                 cash_tip,
+
                 total_prize_value
             )
         )
 
-        # =====================================
+        # =========================================
         # PLAYER LIFETIME TOTALS
-        # =====================================
+        # =========================================
 
         await db.execute(
             """
             INSERT INTO prize_player_totals (
                 winner_id,
                 winner_name,
+
                 free_spins,
                 twitter_giveaway,
                 guess_balance,
                 tournament,
                 raffle,
                 top_chatter,
+                bonus_buy,
+
                 plinko_prize,
                 plinko_wild_points,
+
                 wild_tag,
                 wheel,
                 cash_tip,
+
                 total_prize_value,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (
+                ?, ?,
+                ?, ?, ?, ?, ?,
+                ?, ?, ?,
+                ?, ?,
+                ?, ?, ?,
+                ?, ?
+            )
 
             ON CONFLICT(winner_id)
             DO UPDATE SET
@@ -8960,23 +9951,28 @@ async def record_prize_totals(
                 top_chatter =
                     top_chatter + excluded.top_chatter,
 
+                bonus_buy =
+                    bonus_buy + excluded.bonus_buy,
+
                 plinko_prize =
                     plinko_prize + excluded.plinko_prize,
 
                 plinko_wild_points =
-                    plinko_wild_points + excluded.plinko_wild_points,
+                    plinko_wild_points
+                    + excluded.plinko_wild_points,
 
                 wild_tag =
                     wild_tag + excluded.wild_tag,
 
                 wheel =
                     wheel + excluded.wheel,
-    
+
                 cash_tip =
                     cash_tip + excluded.cash_tip,
-    
+
                 total_prize_value =
-                    total_prize_value + excluded.total_prize_value,
+                    total_prize_value
+                    + excluded.total_prize_value,
 
                 updated_at =
                     excluded.updated_at
@@ -8984,24 +9980,34 @@ async def record_prize_totals(
             (
                 winner_id,
                 winner_name,
+
                 free_spins,
                 twitter_giveaway,
                 guess_balance,
                 tournament,
                 raffle,
                 top_chatter,
+                bonus_buy,
+
                 plinko_prize,
                 plinko_wild_points,
+
                 wild_tag,
                 wheel,
                 cash_tip,
+
                 total_prize_value,
+
                 now.isoformat()
             )
         )
 
-        await db.commit()
+        # =========================================
+        # COMMIT
+        # =========================================
 
+        await db.commit()
+        
 
 class KickUsernameModal(
     discord.ui.Modal,
