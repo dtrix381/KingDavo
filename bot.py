@@ -9839,9 +9839,9 @@ async def record_prize_totals(
     year = now.year
     month = now.month
 
-    # -----------------------------------------
+    # =========================================
     # PRIZE VALUES
-    # -----------------------------------------
+    # =========================================
 
     free_spins = 0.0
     twitter_giveaway = 0.0
@@ -9858,30 +9858,24 @@ async def record_prize_totals(
 
     total_prize_value = 0.0
 
-    # -----------------------------------------
+    # =========================================
     # FREE SPINS
-    # -----------------------------------------
-    #
-    # IMPORTANT:
-    # prize_value is already the USD-converted
-    # amount calculated by FreeSpinsModal.
-    #
-    # Therefore we use prize_value here instead
-    # of quantity * bet_size.
-    # -----------------------------------------
+    # =========================================
 
     if prize_type in (
         "Free Spins",
-        "Plinko - Free Spins"
+        "Plinko - Free Spins",
+        "Wheel - Free Spins"
     ):
 
+        # prize_value is already converted to USD
         free_spins = prize_value or 0
 
         total_prize_value = free_spins
 
-    # -----------------------------------------
+    # =========================================
     # TWITTER GIVEAWAY
-    # -----------------------------------------
+    # =========================================
 
     elif prize_type == "Twitter Giveaway":
 
@@ -9889,9 +9883,9 @@ async def record_prize_totals(
 
         total_prize_value = twitter_giveaway
 
-    # -----------------------------------------
+    # =========================================
     # GUESS THE BALANCE
-    # -----------------------------------------
+    # =========================================
 
     elif prize_type == "Guess the Balance":
 
@@ -9899,9 +9893,9 @@ async def record_prize_totals(
 
         total_prize_value = guess_balance
 
-    # -----------------------------------------
+    # =========================================
     # TOURNAMENT
-    # -----------------------------------------
+    # =========================================
 
     elif prize_type == "Tournament":
 
@@ -9909,9 +9903,9 @@ async def record_prize_totals(
 
         total_prize_value = tournament
 
-    # -----------------------------------------
+    # =========================================
     # RAFFLE
-    # -----------------------------------------
+    # =========================================
 
     elif prize_type == "Raffle":
 
@@ -9919,9 +9913,9 @@ async def record_prize_totals(
 
         total_prize_value = raffle
 
-    # -----------------------------------------
+    # =========================================
     # TOP CHATTER
-    # -----------------------------------------
+    # =========================================
 
     elif prize_type == "Top Chatter":
 
@@ -9929,9 +9923,9 @@ async def record_prize_totals(
 
         total_prize_value = top_chatter
 
-    # -----------------------------------------
+    # =========================================
     # BONUS BUY
-    # -----------------------------------------
+    # =========================================
 
     elif prize_type == "Bonus Buy":
 
@@ -9939,33 +9933,37 @@ async def record_prize_totals(
 
         total_prize_value = bonus_buy
 
-    # -----------------------------------------
+    # =========================================
     # PLINKO
-    # -----------------------------------------
+    # =========================================
 
     elif prize_type == "Plinko":
 
-        # -------------------------------------
+        # -----------------------------------------
         # PLINKO WILD POINTS
-        # -------------------------------------
+        # -----------------------------------------
 
         if wild_points and wild_points > 0:
 
             plinko_wild_points = wild_points
 
-        # -------------------------------------
-        # PLINKO CASH PRIZE
-        # -------------------------------------
+            # Wild Points are NOT cash.
+            # Therefore they do not increase
+            # total_prize_value.
 
-        elif prize_value:
+        # -----------------------------------------
+        # PLINKO CASH PRIZE
+        # -----------------------------------------
+
+        elif prize_value and prize_value > 0:
 
             plinko_prize = prize_value
 
             total_prize_value = plinko_prize
 
-    # -----------------------------------------
+    # =========================================
     # SERVER TAG - FREE SPINS
-    # -----------------------------------------
+    # =========================================
 
     elif prize_type == "Server Tag - Free Spins":
 
@@ -9975,9 +9973,9 @@ async def record_prize_totals(
 
         total_prize_value = wild_tag
 
-    # -----------------------------------------
+    # =========================================
     # SERVER TAG - TIP
-    # -----------------------------------------
+    # =========================================
 
     elif prize_type == "Server Tag - Tip":
 
@@ -9985,9 +9983,9 @@ async def record_prize_totals(
 
         total_prize_value = wild_tag
 
-    # -----------------------------------------
+    # =========================================
     # WHEEL - FREE SPINS
-    # -----------------------------------------
+    # =========================================
 
     elif prize_type == "Wheel - Free Spins":
 
@@ -9997,9 +9995,9 @@ async def record_prize_totals(
 
         total_prize_value = wheel
 
-    # -----------------------------------------
+    # =========================================
     # WHEEL - TIP
-    # -----------------------------------------
+    # =========================================
 
     elif prize_type == "Wheel - Tip":
 
@@ -10007,9 +10005,9 @@ async def record_prize_totals(
 
         total_prize_value = wheel
 
-    # -----------------------------------------
+    # =========================================
     # CASH TIP
-    # -----------------------------------------
+    # =========================================
 
     elif prize_type == "Cash Tip":
 
@@ -10017,14 +10015,35 @@ async def record_prize_totals(
 
         total_prize_value = cash_tip
 
-    # -----------------------------------------
+    # =========================================
     # DATABASE
-    # -----------------------------------------
+    # =========================================
 
     async with aiosqlite.connect(DB_PATH) as db:
 
         # =========================================
         # MONTHLY TOTALS
+        # =========================================
+        #
+        # prize_monthly_totals has EXACTLY
+        # 15 inserted columns:
+        #
+        # 1  year
+        # 2  month
+        # 3  free_spins
+        # 4  twitter_giveaway
+        # 5  guess_balance
+        # 6  tournament
+        # 7  raffle
+        # 8  top_chatter
+        # 9  bonus_buy
+        # 10 plinko_prize
+        # 11 plinko_wild_points
+        # 12 wild_tag
+        # 13 wheel
+        # 14 cash_tip
+        # 15 total_prize_value
+        #
         # =========================================
 
         await db.execute(
@@ -10032,7 +10051,6 @@ async def record_prize_totals(
             INSERT INTO prize_monthly_totals (
                 year,
                 month,
-
                 free_spins,
                 twitter_giveaway,
                 guess_balance,
@@ -10040,23 +10058,17 @@ async def record_prize_totals(
                 raffle,
                 top_chatter,
                 bonus_buy,
-
                 plinko_prize,
                 plinko_wild_points,
-
                 wild_tag,
                 wheel,
                 cash_tip,
-
                 total_prize_value
             )
             VALUES (
-                ?, ?,
-                ?, ?, ?, ?, ?,
-                ?, ?, ?,
-                ?, ?,
-                ?, ?, ?,
-                ?
+                ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?,
+                ?, ?, ?
             )
 
             ON CONFLICT(year, month)
@@ -10129,13 +10141,34 @@ async def record_prize_totals(
         # =========================================
         # PLAYER LIFETIME TOTALS
         # =========================================
+        #
+        # prize_player_totals has EXACTLY
+        # 16 inserted columns:
+        #
+        # 1  winner_id
+        # 2  winner_name
+        # 3  free_spins
+        # 4  twitter_giveaway
+        # 5  guess_balance
+        # 6  tournament
+        # 7  raffle
+        # 8  top_chatter
+        # 9  bonus_buy
+        # 10 plinko_prize
+        # 11 plinko_wild_points
+        # 12 wild_tag
+        # 13 wheel
+        # 14 cash_tip
+        # 15 total_prize_value
+        # 16 updated_at
+        #
+        # =========================================
 
         await db.execute(
             """
             INSERT INTO prize_player_totals (
                 winner_id,
                 winner_name,
-
                 free_spins,
                 twitter_giveaway,
                 guess_balance,
@@ -10143,24 +10176,18 @@ async def record_prize_totals(
                 raffle,
                 top_chatter,
                 bonus_buy,
-
                 plinko_prize,
                 plinko_wild_points,
-
                 wild_tag,
                 wheel,
                 cash_tip,
-
                 total_prize_value,
                 updated_at
             )
             VALUES (
-                ?, ?,
-                ?, ?, ?, ?, ?,
-                ?, ?, ?,
-                ?, ?,
-                ?, ?, ?,
-                ?, ?
+                ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?
             )
 
             ON CONFLICT(winner_id)
