@@ -4154,6 +4154,47 @@ async def finish_giveaway(
 
         await db.commit()
 
+# =========================================
+# WILD GIVEAWAY MANAGER
+# =========================================
+
+WILD_GIVEAWAY_MANAGER_ID = 850665803161534484
+
+
+# =========================================
+# FINISH GIVEAWAY
+# =========================================
+
+async def finish_giveaway(
+    giveaway_id: int,
+    winner_id: int
+):
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        await db.execute(
+            """
+            UPDATE giveaways
+
+            SET
+                active = 0,
+                winner_id = ?
+
+            WHERE id = ?
+            """,
+            (
+                winner_id,
+                giveaway_id
+            )
+        )
+
+        await db.commit()
+
+
+# =========================================
+# CREATE GIVEAWAY EMBED
+# =========================================
+
 def create_giveaway_embed(
     prize_type: str,
     prize: str,
@@ -4210,8 +4251,33 @@ def create_giveaway_embed(
             f"Click **Join Giveaway** below to enter!"
         )
 
+    # -----------------------------------------
+    # UNKNOWN PRIZE TYPE
+    # -----------------------------------------
+
+    else:
+
+        embed.description = (
+            f"## 🎁 {prize}\n\n"
+            f"👥 **Participants:** {participant_count}\n\n"
+            f"Only members with the official "
+            f"**{SERVER_TAG}** Server Tag may participate.\n\n"
+            f"Click **Join Giveaway** below to enter!"
+        )
+
+    # -----------------------------------------
+    # IMAGE
+    # -----------------------------------------
+
     if image_url:
-        embed.set_image(url=image_url)
+
+        embed.set_image(
+            url=image_url
+        )
+
+    # -----------------------------------------
+    # FOOTER
+    # -----------------------------------------
 
     embed.set_footer(
         text="WILD Server Tag Giveaway"
@@ -4219,17 +4285,29 @@ def create_giveaway_embed(
 
     return embed
 
-class WildGiveawayView(discord.ui.View):
 
-    def __init__(self, giveaway_id: int):
+# =========================================
+# WILD GIVEAWAY VIEW
+# =========================================
 
-        super().__init__(timeout=None)
+class WildGiveawayView(
+    discord.ui.View
+):
+
+    def __init__(
+        self,
+        giveaway_id: int
+    ):
+
+        super().__init__(
+            timeout=None
+        )
 
         self.giveaway_id = giveaway_id
 
-    # -----------------------------------------
+    # =========================================
     # JOIN GIVEAWAY
-    # -----------------------------------------
+    # =========================================
 
     @discord.ui.button(
         label="Join Giveaway",
@@ -4274,7 +4352,9 @@ class WildGiveawayView(discord.ui.View):
         # CHECK ACTUAL SERVER TAG
         # -----------------------------------------
 
-        tag = await get_server_tag(member.id)
+        tag = await get_server_tag(
+            member.id
+        )
 
         if not tag["api_ok"]:
 
@@ -4354,9 +4434,13 @@ class WildGiveawayView(discord.ui.View):
             try:
 
                 embed = create_giveaway_embed(
-                    prize,
-                    len(entries) + 1,
-                    image_url
+                    prize_type=prize_type,
+                    prize=prize,
+                    participant_count=len(entries) + 1,
+                    image_url=image_url,
+                    slot_name=slot_name,
+                    spins=spins,
+                    bet_amount=bet_amount
                 )
 
                 await interaction.message.edit(
@@ -4370,9 +4454,9 @@ class WildGiveawayView(discord.ui.View):
                     f"❌ Giveaway embed update error: {e}"
                 )
 
-    # -----------------------------------------
+    # =========================================
     # ENTRANTS
-    # -----------------------------------------
+    # =========================================
 
     @discord.ui.button(
         label="Entrants",
@@ -4393,7 +4477,8 @@ class WildGiveawayView(discord.ui.View):
         if not entries:
 
             await interaction.response.send_message(
-                "👥 **Entrants:** 0\n\nNobody has entered yet.",
+                "👥 **Entrants:** 0\n\n"
+                "Nobody has entered yet.",
                 ephemeral=True
             )
 
@@ -4407,23 +4492,30 @@ class WildGiveawayView(discord.ui.View):
                 f"<@{user_id}>"
             )
 
-        # Discord embed/message limits
-        # Keep the list manageable.
+        text = "\n".join(
+            mentions
+        )
 
-        text = "\n".join(mentions)
+        # -----------------------------------------
+        # DISCORD MESSAGE LIMIT
+        # -----------------------------------------
 
         if len(text) > 1900:
 
-            text = text[:1900] + "\n..."
+            text = (
+                text[:1900]
+                + "\n..."
+            )
 
         await interaction.response.send_message(
-            f"👥 **Entrants: {len(entries)}**\n\n{text}",
+            f"👥 **Entrants: {len(entries)}**\n\n"
+            f"{text}",
             ephemeral=True
         )
 
-    # -----------------------------------------
+    # =========================================
     # DRAW GIVEAWAY
-    # -----------------------------------------
+    # =========================================
 
     @discord.ui.button(
         label="Draw Giveaway",
@@ -4437,20 +4529,38 @@ class WildGiveawayView(discord.ui.View):
         button: discord.ui.Button
     ):
 
-        # -----------------------------------------
-        # ADMIN ONLY
-        # -----------------------------------------
+        # =========================================
+        # ADMIN / GIVEAWAY MANAGER PERMISSION
+        # =========================================
 
-        if not interaction.user.guild_permissions.administrator:
+        is_admin = (
+            interaction.user.guild_permissions.administrator
+        )
+
+        is_giveaway_manager = (
+            interaction.user.id
+            == WILD_GIVEAWAY_MANAGER_ID
+        )
+
+        if not is_admin and not is_giveaway_manager:
 
             await interaction.response.send_message(
-                "❌ Only administrators can draw the giveaway.",
+                "❌ Only the giveaway manager or an "
+                "administrator can draw the giveaway.",
                 ephemeral=True
             )
 
             return
 
+        # =========================================
+        # DEFER
+        # =========================================
+
         await interaction.response.defer()
+
+        # =========================================
+        # GET ACTIVE GIVEAWAY
+        # =========================================
 
         giveaway = await get_active_giveaway()
 
@@ -4479,9 +4589,9 @@ class WildGiveawayView(discord.ui.View):
             bet_amount
         ) = giveaway
 
-        # -----------------------------------------
+        # =========================================
         # GET ENTRANTS
-        # -----------------------------------------
+        # =========================================
 
         entries = await get_giveaway_entries(
             giveaway_id
@@ -4496,11 +4606,11 @@ class WildGiveawayView(discord.ui.View):
 
             return
 
-        eligible = []
+        # =========================================
+        # VERIFY ELIGIBLE ENTRANTS
+        # =========================================
 
-        # -----------------------------------------
-        # VERIFY EVERY ENTRANT
-        # -----------------------------------------
+        eligible = []
 
         for user_id in entries:
 
@@ -4511,12 +4621,21 @@ class WildGiveawayView(discord.ui.View):
             if member is None:
                 continue
 
-            # Must still have Discord role
+            # -------------------------------------
+            # MUST HAVE ROLE
+            # -------------------------------------
+
             if not await has_tag_role(member):
+
                 continue
 
-            # Must still have actual WILD tag
-            tag = await get_server_tag(user_id)
+            # -------------------------------------
+            # MUST HAVE ACTUAL WILD TAG
+            # -------------------------------------
+
+            tag = await get_server_tag(
+                user_id
+            )
 
             if not tag["api_ok"]:
 
@@ -4528,13 +4647,16 @@ class WildGiveawayView(discord.ui.View):
                 continue
 
             if not tag["has_tag"]:
+
                 continue
 
-            eligible.append(member)
+            eligible.append(
+                member
+            )
 
-        # -----------------------------------------
+        # =========================================
         # NO ELIGIBLE USERS
-        # -----------------------------------------
+        # =========================================
 
         if not eligible:
 
@@ -4546,30 +4668,34 @@ class WildGiveawayView(discord.ui.View):
 
             return
 
-        # -----------------------------------------
+        # =========================================
         # DRAW WINNER
-        # -----------------------------------------
+        # =========================================
 
         winner = random.choice(
             eligible
         )
+
+        # =========================================
+        # FINISH GIVEAWAY IN DATABASE
+        # =========================================
 
         await finish_giveaway(
             giveaway_id,
             winner.id
         )
 
-        # -----------------------------------------
+        # =========================================
         # DISABLE BUTTONS
-        # -----------------------------------------
+        # =========================================
 
         for item in self.children:
 
             item.disabled = True
 
-        # -----------------------------------------
+        # =========================================
         # WINNER EMBED
-        # -----------------------------------------
+        # =========================================
 
         winner_embed = discord.Embed(
             title="🏆 WILD GIVEAWAY WINNER!",
@@ -4591,29 +4717,40 @@ class WildGiveawayView(discord.ui.View):
             text="WILD Server Tag Giveaway"
         )
 
+        # =========================================
+        # SEND WINNER MESSAGE
+        # =========================================
+
         await interaction.channel.send(
             content=winner.mention,
             embed=winner_embed
         )
 
-        # -----------------------------------------
+        # =========================================
         # UPDATE ORIGINAL GIVEAWAY
-        # -----------------------------------------
+        # =========================================
 
         try:
 
             closed_embed = create_giveaway_embed(
-                prize,
-                len(entries),
-                image_url
+                prize_type=prize_type,
+                prize=prize,
+                participant_count=len(entries),
+                image_url=image_url,
+                slot_name=slot_name,
+                spins=spins,
+                bet_amount=bet_amount
             )
 
-            closed_embed.title = "🏆 WILD GIVEAWAY — ENDED"
+            closed_embed.title = (
+                "🏆 WILD GIVEAWAY — ENDED"
+            )
 
             closed_embed.description = (
                 f"## 🎁 {prize}\n\n"
                 f"🏆 **Winner:** {winner.mention}\n\n"
-                f"👥 **Participants:** {len(entries)}\n\n"
+                f"👥 **Participants:** "
+                f"{len(entries)}\n\n"
                 f"This giveaway has ended."
             )
 
@@ -4627,6 +4764,15 @@ class WildGiveawayView(discord.ui.View):
             print(
                 f"❌ Giveaway close error: {e}"
             )
+
+        # =========================================
+        # FINAL RESPONSE
+        # =========================================
+
+        await interaction.followup.send(
+            "✅ Giveaway drawn successfully!",
+            ephemeral=True
+        )
 
 class WildGiveawayTypeSelect(discord.ui.View):
 
