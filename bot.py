@@ -77,7 +77,11 @@ YOUTUBE_CHANNEL_ID = "UC5K520DcXsQ6WEY7gZgTbPg"
 YOUTUBE_DISCORD_CHANNEL_ID = 1176520510515970054
 X_DISCORD_CHANNEL_ID = 1176520510515970054
 
-WILD_GIVEAWAY_MANAGER_ID = 850665803161534484
+WILD_GIVEAWAY_MANAGER_IDS = {
+    1376017792209387520,
+    850665803161534484,
+    488015447417946151
+}
 PRIZE_APPROVAL_CHANNEL_ID = 1536611050722426930
 PRIZE_LOG_CHANNEL_ID = 1536535520946032744
 PRIZE_APPROVER_IDS = {
@@ -4538,8 +4542,8 @@ class WildGiveawayView(
         )
 
         is_giveaway_manager = (
-            interaction.user.id
-            == WILD_GIVEAWAY_MANAGER_ID
+                interaction.user.id
+                in WILD_GIVEAWAY_MANAGER_IDS
         )
 
         if not is_admin and not is_giveaway_manager:
@@ -5171,9 +5175,10 @@ async def wild_tag_giveaway(
     # -----------------------------------------
 
     if (
-        not interaction.user.guild_permissions.administrator
-        and interaction.user.id != WILD_GIVEAWAY_MANAGER_ID
+            not interaction.user.guild_permissions.administrator
+            and interaction.user.id not in WILD_GIVEAWAY_MANAGER_IDS
     ):
+
 
         await interaction.response.send_message(
             "❌ Only administrators or the authorized "
