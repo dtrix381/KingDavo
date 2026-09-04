@@ -77,6 +77,8 @@ YOUTUBE_CHANNEL_ID = "UC5K520DcXsQ6WEY7gZgTbPg"
 YOUTUBE_DISCORD_CHANNEL_ID = 1176520510515970054
 X_DISCORD_CHANNEL_ID = 1176520510515970054
 
+LEAVE_LOG_CHANNEL_ID = 1545441471774195782
+
 WILD_GIVEAWAY_MANAGER_IDS = {
     1376017792209387520,
     850665803161534484,
@@ -15258,5 +15260,47 @@ async def convert_to_usd(
         f"Unsupported currency: {currency}"
     )
 
+@bot.event
+async def on_member_remove(member):
+    channel = member.guild.get_channel(LEAVE_LOG_CHANNEL_ID)
+
+    if channel is None:
+        return
+
+    now = discord.utils.utcnow()
+
+    embed = discord.Embed(
+        title="User Left WildLines Server",
+        description=f"**{member}** has left the Wildlines.",
+        timestamp=now
+    )
+
+    embed.add_field(
+        name="Discord Username",
+        value=str(member),
+        inline=True
+    )
+
+    embed.add_field(
+        name="Discord ID",
+        value=str(member.id),
+        inline=True
+    )
+
+    embed.add_field(
+        name="Left At",
+        value=f"<t:{int(now.timestamp())}:F>",
+        inline=False
+    )
+
+    embed.set_thumbnail(url=member.display_avatar.url)
+
+    embed.set_footer(text="Wildlines • Member Leave Log")
+
+    try:
+        await channel.send(embed=embed)
+    except discord.Forbidden:
+        pass
+        
 if __name__ == "__main__":
     bot.run(TOKEN)
