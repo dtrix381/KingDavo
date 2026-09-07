@@ -4211,6 +4211,10 @@ def create_giveaway_embed(
     bet_amount: float | None = None
 ):
 
+    # -----------------------------------------
+    # BASE EMBED
+    # -----------------------------------------
+
     embed = discord.Embed(
         title="🎁 WILD SERVER TAG GIVEAWAY",
         color=discord.Color.gold()
@@ -4223,10 +4227,14 @@ def create_giveaway_embed(
     if prize_type == "Tip Prize":
 
         embed.description = (
-            f"## 💰 ${prize:.2f} Tip Prize\n\n"
+            f"## 💰 ${float(prize):.2f} Tip Prize\n\n"
+
             f"👥 **Participants:** {participant_count}\n\n"
+
+            f"🏷️ **Requirement**\n"
             f"Only members with the official "
             f"**{SERVER_TAG}** Server Tag may participate.\n\n"
+
             f"Click **Join Giveaway** below to enter!"
         )
 
@@ -4236,24 +4244,21 @@ def create_giveaway_embed(
 
     elif prize_type == "Free Spins":
 
-        total_value = 0
-
-        if (
-            spins is not None
-            and bet_amount is not None
-        ):
-
-            total_value = spins * bet_amount
-
         embed.description = (
-            f"## 🎰 FREE SPINS\n\n"
-            f"🎰 **Slot:** {slot_name or 'N/A'}\n"
-            f"🔢 **Spins:** {spins or 0} Spins\n"
-            f"💵 **Bet Amount:** ${bet_amount or 0:.2f}\n"
-            f"💰 **Total Value:** ${total_value:.2f}\n\n"
+            f"## 🎰 FREE SPINS GIVEAWAY\n\n"
+
+            f"🎰 **Slot:** {slot_name or 'N/A'}\n\n"
+
+            f"🔢 **Free Spins:** {spins or 0} Spins\n\n"
+
+            f"💵 **Bet Size:** ${bet_amount or 0:.2f}\n\n"
+
             f"👥 **Participants:** {participant_count}\n\n"
+
+            f"🏷️ **Requirement**\n"
             f"Only members with the official "
             f"**{SERVER_TAG}** Server Tag may participate.\n\n"
+
             f"Click **Join Giveaway** below to enter!"
         )
 
@@ -4265,9 +4270,13 @@ def create_giveaway_embed(
 
         embed.description = (
             f"## 🎁 {prize}\n\n"
+
             f"👥 **Participants:** {participant_count}\n\n"
+
+            f"🏷️ **Requirement**\n"
             f"Only members with the official "
             f"**{SERVER_TAG}** Server Tag may participate.\n\n"
+
             f"Click **Join Giveaway** below to enter!"
         )
 
