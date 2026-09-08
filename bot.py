@@ -5054,7 +5054,7 @@ class WildTagFreeSpinsModal(discord.ui.Modal):
 
         await create_wild_tag_giveaway(
             interaction=interaction,
-            prize_type="Server Tag - Free Spins",
+            prize_type="Free Spins",
             prize_value=prize_value,
             image_url=self.image_url,
             slot_name=slot_name,
