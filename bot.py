@@ -4761,13 +4761,44 @@ class WildGiveawayView(
                 "🏆 WILD GIVEAWAY — ENDED"
             )
 
-            closed_embed.description = (
-                f"## 🎁 {prize}\n\n"
-                f"🏆 **Winner:** {winner.mention}\n\n"
-                f"👥 **Participants:** "
-                f"{len(entries)}\n\n"
-                f"This giveaway has ended."
-            )
+            if prize_type == "Tip Prize":
+                
+                closed_embed.description = (
+                    f"## 💰 ${float(prize):.2f} Tip Prize\n\n"
+                    f"🏆 **Winner:** {winner.mention}\n\n"
+                    f"👥 **Participants:** {len(entries)}\n\n"
+                    f"🏷️ **Requirement**\n"
+                    f"Only members with the official "
+                    f"**{SERVER_TAG}** Server Tag may participate.\n\n"
+                    f"🏁 **This giveaway has ended.**"
+                   )
+
+            elif prize_type == "Free Spins":
+
+                closed_embed.description = (
+                    f"## 🎰 FREE SPINS GIVEAWAY\n\n"
+                    f"🎰 **Slot:** {slot_name or 'N/A'}\n\n"
+                    f"🔢 **Free Spins:** {spins or 0} Spins\n\n"
+                    f"💵 **Bet Size:** ${bet_amount or 0:.2f}\n\n"
+                    f"🏆 **Winner:** {winner.mention}\n\n"
+                    f"👥 **Participants:** {len(entries)}\n\n"
+                    f"🏷️ **Requirement**\n"
+                    f"Only members with the official "
+                    f"**{SERVER_TAG}** Server Tag may participate.\n\n"
+                    f"🏁 **This giveaway has ended.**"
+                )
+
+            else:
+
+                closed_embed.description = (
+                    f"## 🎁 {prize}\n\n"
+                    f"🏆 **Winner:** {winner.mention}\n\n"
+                    f"👥 **Participants:** {len(entries)}\n\n"
+                    f"🏷️ **Requirement**\n"
+                    f"Only members with the official "
+                    f"**{SERVER_TAG}** Server Tag may participate.\n\n"
+                    f"🏁 **This giveaway has ended.**"
+                )
 
             await interaction.message.edit(
                 embed=closed_embed,
