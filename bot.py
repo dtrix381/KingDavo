@@ -2001,22 +2001,51 @@ def is_excluded_from_leaderboard(
     
 @bot.tree.command(name="slot_board")
 async def aj_booard(interaction: discord.Interaction):
+
     if str(interaction.user.id) != "488015447417946151":
-        await interaction.response.send_message("❌ Internal Server Error.", ephemeral=True)
+        await interaction.response.send_message(
+            "❌ Internal Server Error.",
+            ephemeral=True
+        )
         return
 
-    file = discord.File(DB_PATH, filename="events.db")
-    await interaction.response.send_message("📥 Here’s the database file:", file=file, ephemeral=True)
+    # Defer immediately so Discord does not expire the interaction
+    await interaction.response.defer(ephemeral=True)
+
+    file = discord.File(
+        DB_PATH,
+        filename="events.db"
+    )
+
+    await interaction.followup.send(
+        "📥 Here’s the database file:",
+        file=file,
+        ephemeral=True
+    )
 
 
 @bot.tree.command(name="slot_board2")
-async def aj_board2(interaction: discord.Interaction, attachment: discord.Attachment):
+async def aj_board2(
+    interaction: discord.Interaction,
+    attachment: discord.Attachment
+):
+
     if str(interaction.user.id) != "488015447417946151":
-        await interaction.response.send_message("❌ Internal Server Error.", ephemeral=True)
+        await interaction.response.send_message(
+            "❌ Internal Server Error.",
+            ephemeral=True
+        )
         return
 
+    # Defer immediately
+    await interaction.response.defer(ephemeral=True)
+
     await attachment.save(DB_PATH)
-    await interaction.response.send_message("✅ Database replaced successfully.", ephemeral=True)
+
+    await interaction.followup.send(
+        "✅ Database replaced successfully.",
+        ephemeral=True
+    )
 
 
 class RegionRoleView(discord.ui.View):
