@@ -72,6 +72,14 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 JOIN_EMOJI = "🎰"
 manual_games = {}  # Stores {channel_id: (players, provider_name)}
 
+INSTAGRAM_USERNAME = "wildlinesofficial"
+INSTAGRAM_PROFILE_URL = (
+    f"https://www.instagram.com/{INSTAGRAM_USERNAME}/"
+)
+INSTAGRAM_DISCORD_CHANNEL_ID = 1304480656893546536
+INSTAGRAM_CHECK_MINUTES = 10
+INSTAGRAM_MAX_POSTS = 5
+
 X_USERNAME = "WildLinesX"
 YOUTUBE_CHANNEL_ID = "UC5K520DcXsQ6WEY7gZgTbPg"
 YOUTUBE_DISCORD_CHANNEL_ID = 1176520510515970054
@@ -194,6 +202,9 @@ async def on_ready():
     if not check_stream.is_running():
         check_stream.start()
         print("▶️ Kick stream checker started")
+
+    if not instagram_checker.is_running():
+        instagram_checker.start()
 
     if not gamdom_games_sync_task.is_running():
         gamdom_games_sync_task.start()
@@ -15114,5 +15125,1027 @@ async def on_member_remove(member):
     except discord.Forbidden:
         pass
         
+
+async def get_instagram_browser():
+
+    playwright = await async_playwright().start()
+
+    browser = await playwright.chromium.launch(
+        headless=True,
+        args=[
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu"
+        ]
+    )
+
+    session_path = "/data/instagram_session.json"
+
+    context_kwargs = {
+        "viewport": {
+            "width": 1280,
+            "height": 900
+        },
+        "locale": "en-US",
+        "user_agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 "
+            "(KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        )
+    }
+
+    # --------------------------------------------------
+    # INSTAGRAM AUTHENTICATED SESSION
+    # --------------------------------------------------
+
+    if os.path.exists(session_path):
+
+        context_kwargs["storage_state"] = session_path
+
+        print(
+            f"📸 Using Instagram session: "
+            f"{session_path}"
+        )
+
+    else:
+
+        print(
+            f"⚠️ Instagram session not found: "
+            f"{session_path}"
+        )
+
+    context = await browser.new_context(
+        **context_kwargs
+    )
+
+    page = await context.new_page()
+
+    return (
+        playwright,
+        browser,
+        context,
+        page
+    )
+
+async def fetch_instagram_posts(page):
+
+    try:
+
+        print(
+            f"📸 Opening Instagram profile: "
+            f"@{INSTAGRAM_USERNAME}"
+        )
+
+        await page.goto(
+            INSTAGRAM_PROFILE_URL,
+            wait_until="domcontentloaded",
+            timeout=60000
+        )
+
+        # Give Instagram time to render the profile/grid.
+        await page.wait_for_timeout(5000)
+
+        print(
+            f"🌐 Instagram final URL: "
+            f"{page.url}"
+        )
+
+        # --------------------------------------------------
+        # CHECK THAT WE ARE ACTUALLY LOGGED IN
+        # --------------------------------------------------
+
+        body_text = await page.locator("body").inner_text()
+
+        if (
+            "Restricted profile" in body_text
+            or "Log In" in body_text
+            and "Sign Up" in body_text
+        ):
+            print(
+                "❌ Instagram appears to be "
+                "showing the login/restricted page."
+            )
+
+            return []
+
+        print(
+            "✅ Instagram authenticated content "
+            "is available."
+        )
+
+        # --------------------------------------------------
+        # FIND INSTAGRAM POST / REEL LINKS
+        # --------------------------------------------------
+
+        links = await page.locator("a").all()
+
+        posts = []
+        seen_ids = set()
+
+        for link in links:
+
+            try:
+
+                href = await link.get_attribute("href")
+
+                if not href:
+                    continue
+
+                # Normalize relative URLs.
+                if href.startswith("/"):
+                    full_url = (
+                        "https://www.instagram.com"
+                        + href
+                    )
+                else:
+                    full_url = href
+
+                # --------------------------------------------------
+                # ONLY ACCEPT /p/ AND /reel/
+                # --------------------------------------------------
+
+                match = re.search(
+                    r"instagram\.com/"
+                    r"([^/?#]+)/"
+                    r"(p|reel)/"
+                    r"([^/?#]+)/?",
+                    full_url,
+                    re.IGNORECASE
+                )
+
+                if not match:
+                    continue
+
+                account = match.group(1).lower()
+                post_type = match.group(2).lower()
+                post_id = match.group(3)
+
+                # --------------------------------------------------
+                # ONLY ACCEPT WILDLINESOFFICIAL
+                # --------------------------------------------------
+
+                if account != INSTAGRAM_USERNAME.lower():
+                    print(
+                        f"⏭️ Ignoring post from another account: "
+                        f"@{account} / {post_id}"
+                    )
+                    continue
+
+                # --------------------------------------------------
+                # PREVENT DUPLICATES
+                # --------------------------------------------------
+
+                if post_id in seen_ids:
+                    continue
+
+                seen_ids.add(post_id)
+
+                normalized_url = (
+                    f"https://www.instagram.com/"
+                    f"{INSTAGRAM_USERNAME}/"
+                    f"{post_type}/"
+                    f"{post_id}/"
+                )
+
+                posts.append(
+                    {
+                        "id": post_id,
+                        "url": normalized_url,
+                        "post_type": (
+                            "reel"
+                            if post_type == "reel"
+                            else "post"
+                        ),
+                        "image": None,
+                        "published": None
+                    }
+                )
+
+            except Exception:
+                continue
+
+        print(
+            f"🔎 WildLines post/reel links found: "
+            f"{len(posts)}"
+        )
+
+        # --------------------------------------------------
+        # PRINT EVERYTHING FOUND
+        # --------------------------------------------------
+
+        for index, post in enumerate(
+            posts,
+            start=1
+        ):
+
+            print(
+                f"{index}. "
+                f"{post['post_type'].upper()} "
+                f"{post['id']} "
+                f"{post['url']}"
+            )
+
+        if not posts:
+            print(
+                "⚠️ No WildLines Instagram posts "
+                "or reels were found."
+            )
+
+            return []
+
+        # --------------------------------------------------
+        # PINNED POSTS
+        # --------------------------------------------------
+        #
+        # Instagram normally places the 3 pinned posts
+        # before the regular newest posts.
+        #
+        # We therefore inspect the visible post links
+        # and remove the first 3 WildLines posts.
+        #
+        # The remaining posts are treated as the newest
+        # normal posts/reels.
+        # --------------------------------------------------
+
+        PINNED_COUNT = 3
+
+        if len(posts) <= PINNED_COUNT:
+
+            print(
+                "⚠️ Not enough posts found to "
+                "exclude the 3 pinned posts."
+            )
+
+            return []
+
+        non_pinned_posts = posts[
+            PINNED_COUNT:
+        ]
+
+        # --------------------------------------------------
+        # LIMIT TO NEWEST 5 NON-PINNED POSTS
+        # --------------------------------------------------
+
+        non_pinned_posts = non_pinned_posts[
+            :INSTAGRAM_MAX_POSTS
+        ]
+
+        print(
+            "========================================"
+        )
+
+        print(
+            "📸 NEWEST NON-PINNED WILDLINES POSTS"
+        )
+
+        print(
+            "========================================"
+        )
+
+        for index, post in enumerate(
+            non_pinned_posts,
+            start=1
+        ):
+
+            print(
+                f"{index}. "
+                f"{post['post_type'].upper()} "
+                f"{post['id']} "
+                f"{post['url']}"
+            )
+
+        print(
+            "========================================"
+        )
+
+        print(
+            f"✅ Returning "
+            f"{len(non_pinned_posts)} "
+            f"non-pinned posts."
+        )
+
+        return non_pinned_posts
+
+    except Exception as e:
+
+        print(
+            f"❌ Instagram scraper error: "
+            f"{e}"
+        )
+
+        return []
+
+async def get_instagram_post_details(page, post):
+
+    details = {
+        "id": post.get("id"),
+        "url": post.get("url"),
+        "post_type": post.get("post_type", "post"),
+        "image": post.get("image"),
+        "published": post.get("published")
+    }
+
+    post_url = details["url"]
+
+    if not post_url:
+        return details
+
+    try:
+
+        print(
+            f"📸 Opening Instagram "
+            f"{details['post_type']}: "
+            f"{post_url}"
+        )
+
+        await page.goto(
+            post_url,
+            wait_until="domcontentloaded",
+            timeout=60000
+        )
+
+        await page.wait_for_timeout(2500)
+
+        # --------------------------------------------------
+        # IMAGE
+        # --------------------------------------------------
+
+        try:
+
+            og_image = await page.locator(
+                'meta[property="og:image"]'
+            ).get_attribute("content")
+
+            if og_image:
+                details["image"] = og_image
+
+        except Exception:
+            pass
+
+        # --------------------------------------------------
+        # PUBLISHED DATE
+        # --------------------------------------------------
+
+        try:
+
+            time_element = page.locator(
+                "time"
+            ).first
+
+            if await time_element.count():
+
+                datetime_value = (
+                    await time_element.get_attribute(
+                        "datetime"
+                    )
+                )
+
+                if datetime_value:
+                    details["published"] = (
+                        datetime_value
+                    )
+
+        except Exception:
+            pass
+
+        # --------------------------------------------------
+        # FALLBACK: JSON-LD
+        # --------------------------------------------------
+
+        if not details["published"]:
+
+            try:
+
+                json_ld_elements = await page.locator(
+                    'script[type="application/ld+json"]'
+                ).all()
+
+                for element in json_ld_elements:
+
+                    try:
+
+                        raw = await element.text_content()
+
+                        if not raw:
+                            continue
+
+                        data = json.loads(raw)
+
+                        # Sometimes JSON-LD is a list.
+                        if isinstance(data, list):
+
+                            for item in data:
+
+                                if not isinstance(
+                                    item,
+                                    dict
+                                ):
+                                    continue
+
+                                published = item.get(
+                                    "datePublished"
+                                )
+
+                                if published:
+                                    details[
+                                        "published"
+                                    ] = published
+
+                                    break
+
+                        elif isinstance(data, dict):
+
+                            published = data.get(
+                                "datePublished"
+                            )
+
+                            if published:
+                                details[
+                                    "published"
+                                ] = published
+
+                    except Exception:
+                        continue
+
+                    if details["published"]:
+                        break
+
+            except Exception:
+                pass
+
+        # --------------------------------------------------
+        # FINAL DEBUG OUTPUT
+        # --------------------------------------------------
+
+        print(
+            "📸 Instagram post details:"
+        )
+
+        print(
+            f"   ID: {details.get('id')}"
+        )
+
+        print(
+            f"   Type: {details.get('post_type')}"
+        )
+
+        print(
+            f"   Image: "
+            f"{'YES' if details.get('image') else 'NO'}"
+        )
+
+        print(
+            f"   Published: "
+            f"{details.get('published')}"
+        )
+
+        print(
+            f"   URL: {details.get('url')}"
+        )
+
+    except Exception as e:
+
+        print(
+            f"⚠️ Instagram post detail error "
+            f"{post_url}: {e}"
+        )
+
+    return details
+
+async def send_instagram_notification(post):
+
+    try:
+
+        post_url = str(
+            post.get("url") or ""
+        ).strip()
+
+        if not post_url:
+            return
+
+        match = re.search(
+            r"/(?:p|reel)/([^/?#]+)/?",
+            post_url
+        )
+
+        if not match:
+
+            print(
+                f"⚠️ Could not extract "
+                f"Instagram post ID: "
+                f"{post_url}"
+            )
+
+            return
+
+        post_id = match.group(1)
+
+        # -----------------------------------------
+        # CHECK DATABASE
+        # -----------------------------------------
+
+        async with aiosqlite.connect(
+            DB_PATH
+        ) as db:
+
+            cursor = await db.execute(
+                """
+                SELECT 1
+                FROM instagram_notifications
+                WHERE post_id = ?
+                LIMIT 1
+                """,
+                (post_id,)
+            )
+
+            existing = await cursor.fetchone()
+
+        if existing:
+            return
+
+        # -----------------------------------------
+        # POST DATA
+        # -----------------------------------------
+
+        post_type = (
+            post.get("post_type")
+            or "post"
+        )
+
+        image_url = post.get("image")
+        published = post.get("published")
+
+        # -----------------------------------------
+        # DISCORD CHANNEL
+        # -----------------------------------------
+
+        channel = bot.get_channel(
+            INSTAGRAM_DISCORD_CHANNEL_ID
+        )
+
+        if channel is None:
+
+            print(
+                "❌ Instagram Discord "
+                "channel not found."
+            )
+
+            return
+
+        # -----------------------------------------
+        # EMBED
+        # -----------------------------------------
+
+        title = (
+            "📸 NEW WILDLINES INSTAGRAM REEL"
+            if post_type == "reel"
+            else "📸 NEW WILDLINES INSTAGRAM POST"
+        )
+
+        embed = discord.Embed(
+            title=title,
+            description=(
+                "**WildLines posted something "
+                "new on Instagram!**"
+            ),
+            url=post_url,
+            color=discord.Color.purple()
+        )
+
+        embed.set_author(
+            name="WildLines"
+        )
+
+        if image_url:
+
+            embed.set_image(
+                url=image_url
+            )
+
+        embed.add_field(
+            name="🔗 View on Instagram",
+            value=(
+                f"[Open Instagram Post]"
+                f"({post_url})"
+            ),
+            inline=False
+        )
+
+        # -----------------------------------------
+        # PUBLISHED TIME
+        # -----------------------------------------
+
+        if published:
+
+            try:
+
+                published_dt = (
+                    datetime.fromisoformat(
+                        published.replace(
+                            "Z",
+                            "+00:00"
+                        )
+                    )
+                )
+
+                timestamp = int(
+                    published_dt.timestamp()
+                )
+
+                embed.add_field(
+                    name="📅 Published",
+                    value=(
+                        f"<t:{timestamp}:F>\n"
+                        f"(<t:{timestamp}:R>)"
+                    ),
+                    inline=False
+                )
+
+            except Exception as e:
+
+                print(
+                    f"⚠️ Instagram date "
+                    f"parsing error: {e}"
+                )
+
+        embed.set_footer(
+            text="WildLines • Instagram"
+        )
+
+        # -----------------------------------------
+        # SEND
+        # -----------------------------------------
+
+        await channel.send(
+            embed=embed
+        )
+
+        # -----------------------------------------
+        # SAVE TO DATABASE
+        # -----------------------------------------
+
+        async with aiosqlite.connect(
+            DB_PATH
+        ) as db:
+
+            await db.execute(
+                """
+                INSERT OR IGNORE INTO
+                instagram_notifications
+                (
+                    post_id,
+                    post_url,
+                    post_type,
+                    image_url,
+                    published_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    post_id,
+                    post_url,
+                    post_type,
+                    image_url,
+                    published
+                )
+            )
+
+            await db.commit()
+
+        print(
+            f"📸 Instagram notification sent: "
+            f"{post_id}"
+        )
+
+    except Exception as e:
+
+        print(
+            f"❌ Instagram notification "
+            f"send error: {e}"
+        )
+
+@tasks.loop(minutes=INSTAGRAM_CHECK_MINUTES)
+async def instagram_checker():
+
+    print("🔄 Checking Instagram...")
+
+    playwright = None
+    browser = None
+    context = None
+    page = None
+
+    try:
+
+        (
+            playwright,
+            browser,
+            context,
+            page
+        ) = await get_instagram_browser()
+
+        posts = await fetch_instagram_posts(page)
+
+        if not posts:
+
+            print(
+                "⚠️ No Instagram posts found."
+            )
+
+            return
+
+        # --------------------------------------------------
+        # CHECK WHETHER DATABASE ALREADY HAS INSTAGRAM POSTS
+        # --------------------------------------------------
+
+        async with aiosqlite.connect(DB_PATH) as db:
+
+            cursor = await db.execute(
+                """
+                SELECT COUNT(*)
+                FROM instagram_notifications
+                """
+            )
+
+            row = await cursor.fetchone()
+
+        existing_count = row[0] if row else 0
+
+        # --------------------------------------------------
+        # FIRST RUN
+        # --------------------------------------------------
+        #
+        # If the database is empty, establish the current
+        # posts as the baseline.
+        #
+        # DO NOT send Discord notifications for them.
+        # --------------------------------------------------
+
+        if existing_count == 0:
+
+            print(
+                "📸 Instagram notification database "
+                "is empty."
+            )
+
+            print(
+                "📸 Establishing initial Instagram "
+                "baseline..."
+            )
+
+            for post in posts:
+
+                detailed_post = (
+                    await get_instagram_post_details(
+                        page,
+                        post
+                    )
+                )
+
+                post_id = detailed_post.get("id")
+
+                post_url = detailed_post.get("url")
+
+                post_type = (
+                    detailed_post.get("post_type")
+                    or "post"
+                )
+
+                image_url = detailed_post.get("image")
+
+                published = detailed_post.get("published")
+
+                if not post_id or not post_url:
+                    continue
+
+                async with aiosqlite.connect(DB_PATH) as db:
+
+                    await db.execute(
+                        """
+                        INSERT OR IGNORE INTO
+                        instagram_notifications
+                        (
+                            post_id,
+                            post_url,
+                            post_type,
+                            image_url,
+                            published_at
+                        )
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (
+                            post_id,
+                            post_url,
+                            post_type,
+                            image_url,
+                            published
+                        )
+                    )
+
+                    await db.commit()
+
+                print(
+                    f"📸 Baseline saved: "
+                    f"{post_id}"
+                )
+
+                await asyncio.sleep(1)
+
+            print(
+                "✅ Instagram baseline established."
+            )
+
+            print(
+                "ℹ️ No Discord notifications were "
+                "sent during first run."
+            )
+
+            return
+
+        # --------------------------------------------------
+        # NORMAL RUN
+        # --------------------------------------------------
+
+        print(
+            f"📸 Checking {len(posts)} "
+            f"Instagram posts for new content..."
+        )
+
+        for post in reversed(posts):
+
+            post_id = post.get("id")
+
+            if not post_id:
+                continue
+
+            # --------------------------------------------------
+            # CHECK DATABASE
+            # --------------------------------------------------
+
+            async with aiosqlite.connect(DB_PATH) as db:
+
+                cursor = await db.execute(
+                    """
+                    SELECT 1
+                    FROM instagram_notifications
+                    WHERE post_id = ?
+                    LIMIT 1
+                    """,
+                    (post_id,)
+                )
+
+                existing = await cursor.fetchone()
+
+            if existing:
+
+                print(
+                    f"⏭️ Instagram post already "
+                    f"processed: {post_id}"
+                )
+
+                continue
+
+            # --------------------------------------------------
+            # NEW POST FOUND
+            # --------------------------------------------------
+
+            print(
+                f"🆕 NEW Instagram post detected: "
+                f"{post_id}"
+            )
+
+            detailed_post = (
+                await get_instagram_post_details(
+                    page,
+                    post
+                )
+            )
+
+            # --------------------------------------------------
+            # SEND DISCORD NOTIFICATION
+            # --------------------------------------------------
+
+            await send_instagram_notification(
+                detailed_post
+            )
+
+            await asyncio.sleep(2)
+
+    except Exception as e:
+
+        print(
+            f"❌ Instagram checker error: "
+            f"{e}"
+        )
+
+    finally:
+
+        try:
+
+            if page:
+                await page.close()
+
+        except Exception:
+            pass
+
+        try:
+
+            if context:
+                await context.close()
+
+        except Exception:
+            pass
+
+        try:
+
+            if browser:
+                await browser.close()
+
+        except Exception:
+            pass
+
+        try:
+
+            if playwright:
+                await playwright.stop()
+
+        except Exception:
+            pass
+
+@bot.tree.command(name="new_session")
+async def new_session(
+    interaction: discord.Interaction,
+    attachment: discord.Attachment
+):
+    # Owner only
+    if str(interaction.user.id) != "488015447417946151":
+        await interaction.response.send_message(
+            "❌ Internal Server Error.",
+            ephemeral=True
+        )
+        return
+
+    # Only allow JSON files
+    if not attachment.filename.lower().endswith(".json"):
+        await interaction.response.send_message(
+            "❌ Please upload the Instagram session JSON file.",
+            ephemeral=True
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    session_path = "/data/instagram_session.json"
+    temp_path = "/data/instagram_session.tmp"
+
+    try:
+        # Download to temporary file first
+        await attachment.save(temp_path)
+
+        # Make sure it is valid JSON
+        import json
+
+        with open(temp_path, "r", encoding="utf-8") as f:
+            session_data = json.load(f)
+
+        # Basic Playwright storage-state validation
+        if not isinstance(session_data, dict):
+            raise ValueError("Session file is not a JSON object.")
+
+        if "cookies" not in session_data:
+            raise ValueError("Missing Playwright cookies.")
+
+        if "origins" not in session_data:
+            raise ValueError("Missing Playwright origins.")
+
+        # Replace old session only after validation succeeds
+        os.replace(temp_path, session_path)
+
+        await interaction.followup.send(
+            "✅ Instagram session uploaded successfully.",
+            ephemeral=True
+        )
+
+        print("📸 Instagram session updated successfully.")
+
+    except Exception as e:
+
+        # Remove temporary file if something went wrong
+        try:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        except Exception:
+            pass
+
+        print(f"❌ Instagram session upload failed: {e}")
+
+        await interaction.followup.send(
+            "❌ Invalid Instagram session file. "
+            "The existing session was not changed.",
+            ephemeral=True
+        )
+
+
 if __name__ == "__main__":
     bot.run(TOKEN)
