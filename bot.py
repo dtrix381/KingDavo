@@ -79,7 +79,7 @@ INSTAGRAM_PROFILE_URL = (
     f"https://www.instagram.com/{INSTAGRAM_USERNAME}/"
 )
 INSTAGRAM_DISCORD_CHANNEL_ID = 1176520510515970054
-INSTAGRAM_CHECK_MINUTES = 120
+INSTAGRAM_CHECK_MINUTES = 180
 INSTAGRAM_MAX_POSTS = 5
 
 X_USERNAME = "WildLinesX"
@@ -3967,7 +3967,7 @@ async def send_tag_log(
         embed=embed
     )
 
-@tasks.loop(hours=1)
+@tasks.loop(hours=4)
 async def tag_scanner():
 
     guild = bot.get_guild(GUILD_ID)
@@ -13068,7 +13068,7 @@ async def treasure_hunt(
     )
 
 
-@tasks.loop(minutes=15)
+@tasks.loop(minutes=30)
 async def youtube_notification_task():
 
     feed_url = (
@@ -13358,7 +13358,7 @@ async def youtube_notification_task():
             f"❌ YouTube notification error: {e}"
         )
 
-@tasks.loop(minutes=15)
+@tasks.loop(minutes=30)
 async def x_notification_task():
 
     username = "WildLinesX"
