@@ -111,10 +111,16 @@ TREASURE_HUNT_ROLE_ID = 1534149017464868935
 TREASURE_HUNT_PRIZE = "$100 CAD"
 treasure_pending_submissions = {}
 
-EXCLUDED_LEADERBOARD_USERS = {
+EXCLUDED_LEADERBOARD_ROLES = {
     1534722947527348234,  # Streamer
     1176520509907808388,  # Admin
     1176520509878440004,  # Mod
+}
+
+LEADERBOARD_ROLE_EXCEPTIONS = {
+    1393578682450448465,  # Missalpha
+    895351633129664563,  # rudra
+    581258079069274122,  # ghostrider
 }
 
 RUMBLE_HOST_ROLES = {
@@ -1995,21 +2001,22 @@ async def profile(
 def is_excluded_from_leaderboard(
     guild: discord.Guild,
     user_id: int
-):
+) -> bool:
+
+    # Specific users are always allowed
+    if user_id in LEADERBOARD_ROLE_EXCEPTIONS:
+        return False
 
     member = guild.get_member(user_id)
 
+    # If Discord member cannot be found,
+    # don't exclude them automatically.
     if member is None:
         return False
 
-    member_role_ids = {
-        role.id
+    return any(
+        role.id in EXCLUDED_LEADERBOARD_ROLES
         for role in member.roles
-    }
-
-    return bool(
-        member_role_ids
-        & EXCLUDED_LEADERBOARD_USERS
     )
     
 @bot.tree.command(name="slot_board")
