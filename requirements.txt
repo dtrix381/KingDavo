@@ -20,3 +20,4 @@ yarl==1.24.2
 beautifulsoup4==4.13.3
 websockets==15.0.1
 playwright==1.55.0
+supabase==2.31.0
