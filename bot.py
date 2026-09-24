@@ -18,6 +18,10 @@ import json
 import websockets
 from urllib.parse import urljoin
 from playwright.async_api import async_playwright
+from supabase import create_client
+import io
+from PIL import Image, ImageDraw
+from urllib.parse import quote
 
 PROVIDER_IMAGES = {
     "pragmatic": "https://cdn.discordapp.com/attachments/1283197229913608192/1362821484447399936/CvuaWH6WBTwAAAAASUVORK5CYII.png?ex=6a2cd729&is=6a2b85a9&hm=e8ef3da0bde4fbd77e5d2aa99ada5fdd66b0ac392035b4c79ddcefb5acef18f5",
@@ -32,6 +36,14 @@ if not TOKEN:
     raise SystemExit("❌ DISCORD_BOT_TOKEN is not set in environment variables.")
     
 DB_PATH = "/data/events.db"
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY")
+
+supabase = create_client(
+    SUPABASE_URL,
+    SUPABASE_SECRET_KEY
+)
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -387,12 +399,12 @@ async def get_all_phrases(provider):
 
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
-            f"SELECT slot, type, phrase FROM {provider}"
+            f"SELECT slot, type, phrase, artwork_url, avatar_config FROM {provider}"
         ) as cursor:
 
             rows = await cursor.fetchall()
 
-            for slot, event_type, phrase in rows:
+            for slot, event_type, phrase, artwork_url, avatar_config in rows:
 
                 if slot not in phrases:
                     phrases[slot] = {
@@ -404,16 +416,45 @@ async def get_all_phrases(provider):
                         "super kill": []
                     }
 
-                phrases[slot][event_type].append(phrase)
+                phrases[slot][event_type].append({
+                    "phrase": phrase,
+                    "artwork_url": artwork_url,
+                    "avatar_config": avatar_config
+                })
 
     return phrases
 
 def get_unused_phrase(slot, event_type, all_phrases, used_phrases):
-    for phrase in all_phrases[slot][event_type]:
+    for phrase_data in all_phrases[slot][event_type]:
+
+        phrase = phrase_data["phrase"]
+
         if phrase not in used_phrases[slot][event_type]:
             used_phrases[slot][event_type].add(phrase)
-            return phrase
+
+            return phrase_data
+
     return None
+
+
+def get_phrase_data(phrase_data):
+    if not phrase_data:
+        return None, None, None
+
+    phrase = phrase_data["phrase"]
+    artwork_url = phrase_data.get("artwork_url")
+    avatar_config = phrase_data.get("avatar_config")
+
+    if avatar_config:
+        try:
+            avatar_config = json.loads(avatar_config)
+        except (json.JSONDecodeError, TypeError):
+            print(
+                f"❌ Invalid avatar_config: {avatar_config!r}"
+            )
+            avatar_config = None
+
+    return phrase, artwork_url, avatar_config
 
 def format_players(players_list, max_mentions=5):
     total_players = len(players_list)
@@ -1373,6 +1414,14 @@ async def rumble_start(interaction: discord.Interaction, provider: app_commands.
 
     while len(alive) > 1:
         try:
+            # Artwork from the last eligible phrase in this round
+            round_artwork_url = None
+            round_avatar_config = None
+
+            round_player = None
+            round_killer = None
+            round_victim = None
+
             # Get a random round description from the database
             round_description = await get_random_description(len(alive))
 
@@ -1406,182 +1455,502 @@ async def rumble_start(interaction: discord.Interaction, provider: app_commands.
                 slot = random.choice(list(all_phrases.keys()))
 
                 if event_type == "revive":
+
                     if eliminated:
-                        phrase = get_unused_phrase(slot, "revive", all_phrases, used_phrases)
-                        if phrase:
+
+                        phrase_data = get_unused_phrase(
+                            slot,
+                            "revive",
+                            all_phrases,
+                            used_phrases
+                        )
+
+                        if phrase_data:
+
+                            phrase, artwork_url, avatar_config = get_phrase_data(
+                                phrase_data
+                            )
+
                             p = random.choice(eliminated)
+
+                            # Remember artwork + avatar configuration for round climax
+                            if artwork_url:
+                                round_artwork_url = artwork_url
+                                round_avatar_config = avatar_config
+                                round_player = p
+                                round_killer = None
+                                round_victim = None
+
                             eliminated.remove(p)
                             alive.append(p)
+
                             player_stats[p]["revives"] += 1
-                            used_phrases[slot]["revive"].add(phrase)
-                            await interaction.channel.send(phrase.format(player=p.mention) + f" *({slot})*")
+
+                            await interaction.channel.send(
+                                phrase.format(
+                                    player=p.mention
+                                ) + f" *({slot})*"
+                            )
+
                             try:
-                                # Your code that could raise an error
-                                print(f"Revive: Slot: {slot}, Phrase: {phrase}")  # Debugging line
+
+                                print(
+                                    f"Revive: Slot: {slot}, "
+                                    f"Phrase: {phrase}, "
+                                    f"Artwork: {artwork_url}"
+                                )
 
                             except Exception as e:
-                                # Print the error message and relevant debugging information
-                                print(f"Error occurred! Slot: {slot}, Phrase: {phrase}, Error: {e}")
+
+                                print(
+                                    f"Error occurred! "
+                                    f"Slot: {slot}, "
+                                    f"Phrase: {phrase}, "
+                                    f"Artwork: {artwork_url}, "
+                                    f"Error: {e}"
+                                )
+
 
                 elif event_type == "neutral":
-                    phrase = get_unused_phrase(slot, "neutral", all_phrases, used_phrases)
-                    if phrase:
+
+                    phrase_data = get_unused_phrase(
+                        slot,
+                        "neutral",
+                        all_phrases,
+                        used_phrases
+                    )
+
+                    if phrase_data:
+
+                        phrase, artwork_url, avatar_config = get_phrase_data(
+                            phrase_data
+                        )
+
                         p = random.choice(alive)
-                        used_phrases[slot]["neutral"].add(phrase)
-                        await interaction.channel.send(phrase.format(player=p.mention) + f" *({slot})*")
+
+                        # Remember artwork + avatar configuration for round climax
+                        if artwork_url:
+                            round_artwork_url = artwork_url
+                            round_avatar_config = avatar_config
+                            round_player = p
+                            round_killer = None
+                            round_victim = None
+
+                        await interaction.channel.send(
+                            phrase.format(
+                                player=p.mention
+                            ) + f" *({slot})*"
+                        )
+
                         try:
-                            # Your code that could raise an error
-                            print(f"Neutral: Slot: {slot}, Phrase: {phrase}")  # Debugging line
+
+                            print(
+                                f"Neutral: Slot: {slot}, "
+                                f"Phrase: {phrase}, "
+                                f"Artwork: {artwork_url}"
+                            )
 
                         except Exception as e:
-                            # Print the error message and relevant debugging information
-                            print(f"Error occurred! Slot: {slot}, Phrase: {phrase}, Error: {e}")  # Debugging line
+
+                            print(
+                                f"Error occurred! "
+                                f"Slot: {slot}, "
+                                f"Phrase: {phrase}, "
+                                f"Artwork: {artwork_url}, "
+                                f"Error: {e}"
+                            )
+
 
                 elif event_type == "kill":
+
                     if len(alive) >= 2:
-                        phrase = get_unused_phrase(slot, "kill", all_phrases, used_phrases)
-                        if phrase:
-                            killer, victim = random.sample(alive, 2)
+
+                        phrase_data = get_unused_phrase(
+                            slot,
+                            "kill",
+                            all_phrases,
+                            used_phrases
+                        )
+
+                        if phrase_data:
+
+                            phrase, artwork_url, avatar_config = get_phrase_data(
+                                phrase_data
+                            )
+
+                            killer, victim = random.sample(
+                                alive,
+                                2
+                            )
+
+                            # Remember artwork + avatar configuration for round climax
+                            if artwork_url:
+                                round_artwork_url = artwork_url
+                                round_avatar_config = avatar_config
+                                round_killer = killer
+                                round_victim = victim
+                                round_player = None
+
                             alive.remove(victim)
                             eliminated.append(victim)
+
                             player_stats[killer]["kills"] += 1
                             player_stats[victim]["deaths"] += 1
-                            used_phrases[slot]["kill"].add(phrase)
+
                             await interaction.channel.send(
-                                phrase.format(killer=killer.mention, victim=f"~~{victim.mention}~~") + f" *({slot})*")
+                                phrase.format(
+                                    killer=killer.mention,
+                                    victim=f"~~{victim.mention}~~"
+                                ) + f" *({slot})*"
+                            )
+
                             try:
-                                # Your code that could raise an error
-                                print(f"Kill: Slot: {slot}, Phrase: {phrase}")  # Debugging line
+
+                                print(
+                                    f"Kill: Slot: {slot}, "
+                                    f"Phrase: {phrase}, "
+                                    f"Artwork: {artwork_url}"
+                                )
 
                             except Exception as e:
-                                # Print the error message and relevant debugging information
-                                print(f"Error occurred! Slot: {slot}, Phrase: {phrase}, Error: {e}")
+
+                                print(
+                                    f"Error occurred! "
+                                    f"Slot: {slot}, "
+                                    f"Phrase: {phrase}, "
+                                    f"Artwork: {artwork_url}, "
+                                    f"Error: {e}"
+                                )
+
 
                 elif event_type == "suicide":
-                    phrase = get_unused_phrase(slot, "suicide", all_phrases, used_phrases)
-                    if phrase:
+
+                    phrase_data = get_unused_phrase(
+                        slot,
+                        "suicide",
+                        all_phrases,
+                        used_phrases
+                    )
+
+                    if phrase_data:
+
+                        phrase, artwork_url, avatar_config = get_phrase_data(
+                            phrase_data
+                        )
+
                         p = random.choice(alive)
+
+                        # Remember artwork + avatar configuration for round climax
+                        if artwork_url:
+                            round_artwork_url = artwork_url
+                            round_avatar_config = avatar_config
+                            round_player = p
+                            round_killer = None
+                            round_victim = None
+
                         alive.remove(p)
                         eliminated.append(p)
+
                         player_stats[p]["deaths"] += 1
-                        used_phrases[slot]["suicide"].add(phrase)
-                        await interaction.channel.send(phrase.format(player=f"~~{p.mention}~~") + f" *({slot})*")
+
+                        await interaction.channel.send(
+                            phrase.format(
+                                player=f"~~{p.mention}~~"
+                            ) + f" *({slot})*"
+                        )
+
                         try:
-                            # Your code that could raise an error
-                            print(f"Suicide: Slot: {slot}, Phrase: {phrase}")  # Debugging line
+
+                            print(
+                                f"Suicide: Slot: {slot}, "
+                                f"Phrase: {phrase}, "
+                                f"Artwork: {artwork_url}"
+                            )
 
                         except Exception as e:
-                            # Print the error message and relevant debugging information
-                            print(f"Error occurred! Slot: {slot}, Phrase: {phrase}, Error: {e}")
+
+                            print(
+                                f"Error occurred! "
+                                f"Slot: {slot}, "
+                                f"Phrase: {phrase}, "
+                                f"Artwork: {artwork_url}, "
+                                f"Error: {e}"
+                            )
+
 
                 elif event_type == "power-up":
-                    phrase = get_unused_phrase(slot, "power-up", all_phrases, used_phrases)
-                    if phrase:
+
+                    phrase_data = get_unused_phrase(
+                        slot,
+                        "power-up",
+                        all_phrases,
+                        used_phrases
+                    )
+
+                    if phrase_data:
+
+                        phrase, artwork_url, avatar_config = get_phrase_data(
+                            phrase_data
+                        )
+
                         p = random.choice(alive)
+
+                        # Remember artwork + avatar configuration for round climax
+                        if artwork_url:
+                            round_artwork_url = artwork_url
+                            round_avatar_config = avatar_config
+                            round_player = p
+                            round_killer = None
+                            round_victim = None
+
                         power_ups[p] = slot
-                        used_phrases[slot]["power-up"].add(phrase)
-                        await interaction.channel.send(phrase.format(player=p.mention) + f" *({slot})*")
+
+                        await interaction.channel.send(
+                            phrase.format(
+                                player=p.mention
+                            ) + f" *({slot})*"
+                        )
+
                         try:
-                            # Your code that could raise an error
-                            print(f"Power-up: Slot: {slot}, Phrase: {phrase}")  # Debugging line
+
+                            print(
+                                f"Power-up: Slot: {slot}, "
+                                f"Phrase: {phrase}, "
+                                f"Artwork: {artwork_url}"
+                            )
 
                         except Exception as e:
-                            # Print the error message and relevant debugging information
-                            print(f"Error occurred! Slot: {slot}, Phrase: {phrase}, Error: {e}")
 
+                            print(
+                                f"Error occurred! "
+                                f"Slot: {slot}, "
+                                f"Phrase: {phrase}, "
+                                f"Artwork: {artwork_url}, "
+                                f"Error: {e}"
+                            )
 
-                # In your round event handling section (inside the while loop)
 
                 elif event_type == "super kill":
 
-                    eligible_killers = [p for p in alive if p in power_ups]
+                    eligible_killers = [
+                        p for p in alive
+                        if p in power_ups
+                    ]
 
                     if eligible_killers and len(alive) > 1:
 
-                        killer = random.choice(eligible_killers)
+                        killer = random.choice(
+                            eligible_killers
+                        )
 
-                        possible_victims = [p for p in alive if p != killer]
+                        possible_victims = [
+                            p for p in alive
+                            if p != killer
+                        ]
 
                         if possible_victims:
 
-                            victim = random.choice(possible_victims)
+                            victim = random.choice(
+                                possible_victims
+                            )
 
                             power_slot = power_ups[killer]
 
-                            phrase = get_unused_phrase(power_slot, "super kill", all_phrases, used_phrases)
+                            phrase_data = get_unused_phrase(
+                                power_slot,
+                                "super kill",
+                                all_phrases,
+                                used_phrases
+                            )
 
-                            if phrase:
+                            if phrase_data:
+
+                                phrase, artwork_url, avatar_config = get_phrase_data(
+                                    phrase_data
+                                )
+
+                                # Remember artwork + avatar configuration for round climax
+                                if artwork_url:
+                                    round_artwork_url = artwork_url
+                                    round_avatar_config = avatar_config
+                                    round_killer = killer
+                                    round_victim = victim
+                                    round_player = None
 
                                 alive.remove(victim)
-
                                 eliminated.append(victim)
 
                                 player_stats[killer]["kills"] += 1
                                 player_stats[killer]["super_kills"] += 1
                                 player_stats[victim]["deaths"] += 1
 
-                                used_phrases[power_slot]["super kill"].add(phrase)
-
                                 try:
 
-                                    message = phrase.format(killer=killer.mention, victim=f"~~{victim.mention}~~")
+                                    message = phrase.format(
+                                        killer=killer.mention,
+                                        victim=f"~~{victim.mention}~~"
+                                    )
 
-                                    await interaction.channel.send(message + f" *({power_slot})*")
-                                    try:
-                                        # Your code that could raise an error
-                                        print(f"Super Kill: Slot: {power_slot}, Phrase: {phrase}")  # Debugging line
+                                    await interaction.channel.send(
+                                        message + f" *({power_slot})*"
+                                    )
 
-                                    except Exception as e:
-                                        # Print the error message and relevant debugging information
-                                        print(f"Error occurred! Slot: {power_slot}, Phrase: {phrase}, Error: {e}")
+                                    print(
+                                        f"Super Kill: Slot: {power_slot}, "
+                                        f"Phrase: {phrase}, "
+                                        f"Artwork: {artwork_url}"
+                                    )
 
                                 except KeyError as e:
 
                                     await interaction.channel.send(
-
-                                        f"⚠️ Phrase format error (super kill): missing key {e}")
-                                    try:
-                                        # Your code that could raise an error
-                                        print(f"Super Kill: Slot: {power_slot}, Phrase: {phrase}")  # Debugging line
-
-                                    except Exception as e:
-                                        # Print the error message and relevant debugging information
-                                        print(f"Error occurred! Slot: {power_slot}, Phrase: {phrase}, Error: {e}")
+                                        f"⚠️ Phrase format error "
+                                        f"(super kill): missing key {e}"
+                                    )
 
                             else:
 
                                 # Fallback neutral phrase if super kill phrase is missing
+                                fallback_slot = random.choice(
+                                    list(all_phrases.keys())
+                                )
 
-                                fallback_slot = random.choice(list(all_phrases.keys()))
+                                fallback_data = get_unused_phrase(
+                                    fallback_slot,
+                                    "neutral",
+                                    all_phrases,
+                                    used_phrases
+                                )
 
-                                fallback = get_unused_phrase(fallback_slot, "neutral", all_phrases, used_phrases)
+                                if fallback_data:
 
-                                if fallback:
+                                    (
+                                        fallback,
+                                        fallback_artwork_url,
+                                        fallback_avatar_config
+                                    ) = get_phrase_data(
+                                        fallback_data
+                                    )
 
-                                    used_phrases[fallback_slot]["neutral"].add(fallback)
+                                    neutral_player = random.choice(
+                                        alive
+                                    )
 
-                                    neutral_player = random.choice(alive)
+                                    # Remember fallback artwork + avatar configuration
+                                    if fallback_artwork_url:
+                                        round_artwork_url = fallback_artwork_url
+                                        round_avatar_config = fallback_avatar_config
+                                        round_player = neutral_player
+                                        round_killer = None
+                                        round_victim = None
 
                                     try:
-                                        print(f"🧪 DEBUG fallback: {fallback}")  # ← Add this line here
+
+                                        print(
+                                            f"🧪 DEBUG fallback: {fallback}, "
+                                            f"Artwork: {fallback_artwork_url}"
+                                        )
+
                                         message = fallback.format(
                                             player=neutral_player.mention,
                                             killer=neutral_player.mention,
                                             victim=neutral_player.mention
                                         )
-                                        await interaction.channel.send(message + f" *({fallback_slot})*")
+
+                                        await interaction.channel.send(
+                                            message + f" *({fallback_slot})*"
+                                        )
+
                                     except KeyError as e:
+
                                         try:
+
                                             print(
-                                                f"🧪 DEBUG fallback (retry with just player): {fallback}")  # Optional second debug
-                                            message = fallback.format(player=neutral_player.mention)
-                                            await interaction.channel.send(message + f" *({fallback_slot})*")
-                                        except KeyError as inner_e:
-                                            await interaction.channel.send(
-                                                f"⚠️ Fallback phrase format error: missing key {inner_e} in: {fallback}"
+                                                f"🧪 DEBUG fallback "
+                                                f"(retry with just player): {fallback}"
                                             )
+
+                                            message = fallback.format(
+                                                player=neutral_player.mention
+                                            )
+
+                                            await interaction.channel.send(
+                                                message + f" *({fallback_slot})*"
+                                            )
+
+                                        except KeyError as inner_e:
+
+                                            await interaction.channel.send(
+                                                f"⚠️ Fallback phrase format error: "
+                                                f"missing key {inner_e} in: {fallback}"
+                                            )
+
+            # -----------------------------------------
+            # DISPLAY LAST ELIGIBLE ARTWORK FOR ROUND
+            # WITH PLAYER / KILLER / VICTIM AVATARS
+            # -----------------------------------------
+
+            if (
+                    round_artwork_url
+                    and round_avatar_config
+                    and isinstance(round_artwork_url, str)
+                    and round_artwork_url.startswith(("http://", "https://"))
+            ):
+
+                print(
+                    f"🖼️ ROUND ARTWORK DEBUG | "
+                    f"URL={round_artwork_url!r} | "
+                    f"CONFIG={round_avatar_config!r} | "
+                    f"PLAYER={round_player} | "
+                    f"KILLER={round_killer} | "
+                    f"VICTIM={round_victim}"
+                )
+
+                rendered_artwork = await render_rumble_artwork(
+                    artwork_url=round_artwork_url,
+                    avatar_config=round_avatar_config,
+                    player_avatar_url=(
+                        round_player.display_avatar.url
+                        if round_player
+                        else None
+                    ),
+                    killer_avatar_url=(
+                        round_killer.display_avatar.url
+                        if round_killer
+                        else None
+                    ),
+                    victim_avatar_url=(
+                        round_victim.display_avatar.url
+                        if round_victim
+                        else None
+                    )
+                )
+
+                if rendered_artwork:
+                    artwork_file = discord.File(
+                        rendered_artwork,
+                        filename="rumble_climax.png"
+                    )
+
+                    artwork_embed = discord.Embed(
+                        title=f"Round {round_number} Climax",
+                        color=discord.Color.blurple()
+                    )
+
+                    artwork_embed.set_image(
+                        url="attachment://rumble_climax.png"
+                    )
+
+                    await interaction.channel.send(
+                        embed=artwork_embed,
+                        file=artwork_file
+                    )
+
+            # Move to the next round
             round_number += 1
+
             await asyncio.sleep(random.randint(3, 5))
+
         except Exception as e:
             print(f"Error during round {round_number}: {e}")
             await interaction.channel.send(f"❌ An error occurred during the round: {e}")
@@ -16154,6 +16523,1603 @@ async def new_session(
             "The existing session was not changed.",
             ephemeral=True
         )
+
+# =========================================
+# ARTWORK POSITIONING VIEW
+# =========================================
+
+class ArtworkPositionView(discord.ui.View):
+
+    def __init__(
+        self,
+        interaction: discord.Interaction,
+        artwork_url,
+        artwork_data,
+        provider,
+        slot,
+        phrase_type,
+        phrase,
+        killer_avatar_url,
+        victim_avatar_url=None
+    ):
+        super().__init__(timeout=600)
+
+        self.owner_id = interaction.user.id
+
+        self.provider = provider
+        self.slot = slot
+        self.phrase_type = phrase_type
+        self.phrase = phrase
+
+        self.artwork_url = artwork_url
+        self.artwork_data = artwork_data
+
+        # These are ONLY preview avatars.
+        # They are NOT saved to avatar_config.
+        self.killer_avatar_url = killer_avatar_url
+        self.victim_avatar_url = victim_avatar_url
+
+        # -----------------------------------------
+        # DETERMINE AVATAR COUNT
+        # -----------------------------------------
+
+        if phrase_type in ("kill", "super kill"):
+
+            # Two avatars
+            self.avatar_config = {
+                "killer": {
+                    "x": 300,
+                    "y": 300,
+                    "size": 180
+                },
+                "victim": {
+                    "x": 700,
+                    "y": 300,
+                    "size": 180
+                }
+            }
+
+            self.active_avatar = "killer"
+
+        else:
+
+            # One avatar
+            self.avatar_config = {
+                "player": {
+                    "x": 500,
+                    "y": 300,
+                    "size": 180
+                }
+            }
+
+            self.active_avatar = "player"
+
+        # -----------------------------------------
+        # BUTTONS
+        # -----------------------------------------
+
+        if phrase_type in ("kill", "super kill"):
+
+            self.killer_button = discord.ui.Button(
+                label="Killer",
+                emoji="🔪",
+                style=discord.ButtonStyle.primary,
+                row=0
+            )
+
+            self.victim_button = discord.ui.Button(
+                label="Victim",
+                emoji="💀",
+                style=discord.ButtonStyle.secondary,
+                row=0
+            )
+
+            self.killer_button.callback = self.select_killer
+            self.victim_button.callback = self.select_victim
+
+            self.add_item(self.killer_button)
+            self.add_item(self.victim_button)
+
+        # -----------------------------------------
+        # MOVEMENT
+        # -----------------------------------------
+
+        left_button = discord.ui.Button(
+            label="Left",
+            emoji="⬅️",
+            style=discord.ButtonStyle.secondary,
+            row=1
+        )
+
+        right_button = discord.ui.Button(
+            label="Right",
+            emoji="➡️",
+            style=discord.ButtonStyle.secondary,
+            row=1
+        )
+
+        up_button = discord.ui.Button(
+            label="Up",
+            emoji="⬆️",
+            style=discord.ButtonStyle.secondary,
+            row=1
+        )
+
+        down_button = discord.ui.Button(
+            label="Down",
+            emoji="⬇️",
+            style=discord.ButtonStyle.secondary,
+            row=1
+        )
+
+        left_button.callback = self.move_left
+        right_button.callback = self.move_right
+        up_button.callback = self.move_up
+        down_button.callback = self.move_down
+
+        self.add_item(left_button)
+        self.add_item(right_button)
+        self.add_item(up_button)
+        self.add_item(down_button)
+
+        # -----------------------------------------
+        # SIZE
+        # -----------------------------------------
+
+        smaller_button = discord.ui.Button(
+            label="Smaller",
+            emoji="➖",
+            style=discord.ButtonStyle.secondary,
+            row=2
+        )
+
+        bigger_button = discord.ui.Button(
+            label="Bigger",
+            emoji="➕",
+            style=discord.ButtonStyle.secondary,
+            row=2
+        )
+
+        reset_button = discord.ui.Button(
+            label="Reset",
+            emoji="🔄",
+            style=discord.ButtonStyle.secondary,
+            row=2
+        )
+
+        smaller_button.callback = self.make_smaller
+        bigger_button.callback = self.make_bigger
+        reset_button.callback = self.reset_active
+
+        self.add_item(smaller_button)
+        self.add_item(bigger_button)
+        self.add_item(reset_button)
+
+        # -----------------------------------------
+        # SAVE / CANCEL
+        # -----------------------------------------
+
+        save_button = discord.ui.Button(
+            label="Save",
+            emoji="💾",
+            style=discord.ButtonStyle.success,
+            row=3
+        )
+
+        cancel_button = discord.ui.Button(
+            label="Cancel",
+            emoji="❌",
+            style=discord.ButtonStyle.danger,
+            row=3
+        )
+
+        save_button.callback = self.save_configuration
+        cancel_button.callback = self.cancel_configuration
+
+        self.add_item(save_button)
+        self.add_item(cancel_button)
+
+    # =========================================
+    # PERMISSION CHECK
+    # =========================================
+
+    async def interaction_check(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        if interaction.user.id != self.owner_id:
+
+            await interaction.response.send_message(
+                "❌ Only the person who started this artwork setup can use these buttons.",
+                ephemeral=True
+            )
+
+            return False
+
+        return True
+
+    # =========================================
+    # ACTIVE AVATAR
+    # =========================================
+
+    async def select_killer(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        self.active_avatar = "killer"
+
+        await self.update_preview(interaction)
+
+    async def select_victim(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        self.active_avatar = "victim"
+
+        await self.update_preview(interaction)
+
+    # =========================================
+    # MOVEMENT
+    # =========================================
+
+    async def move_left(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        self.avatar_config[
+            self.active_avatar
+        ]["x"] -= 20
+
+        await self.update_preview(interaction)
+
+    async def move_right(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        self.avatar_config[
+            self.active_avatar
+        ]["x"] += 20
+
+        await self.update_preview(interaction)
+
+    async def move_up(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        self.avatar_config[
+            self.active_avatar
+        ]["y"] -= 20
+
+        await self.update_preview(interaction)
+
+    async def move_down(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        self.avatar_config[
+            self.active_avatar
+        ]["y"] += 20
+
+        await self.update_preview(interaction)
+
+    # =========================================
+    # SIZE
+    # =========================================
+
+    async def make_smaller(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        current_size = self.avatar_config[
+            self.active_avatar
+        ]["size"]
+
+        self.avatar_config[
+            self.active_avatar
+        ]["size"] = max(
+            50,
+            current_size - 20
+        )
+
+        await self.update_preview(interaction)
+
+    async def make_bigger(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        current_size = self.avatar_config[
+            self.active_avatar
+        ]["size"]
+
+        self.avatar_config[
+            self.active_avatar
+        ]["size"] = min(
+            500,
+            current_size + 20
+        )
+
+        await self.update_preview(interaction)
+
+    # =========================================
+    # RESET
+    # =========================================
+
+    async def reset_active(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        if self.phrase_type in (
+            "kill",
+            "super kill"
+        ):
+
+            if self.active_avatar == "killer":
+
+                self.avatar_config["killer"] = {
+                    "x": 300,
+                    "y": 300,
+                    "size": 180
+                }
+
+            elif self.active_avatar == "victim":
+
+                self.avatar_config["victim"] = {
+                    "x": 700,
+                    "y": 300,
+                    "size": 180
+                }
+
+        else:
+
+            self.avatar_config["player"] = {
+                "x": 500,
+                "y": 300,
+                "size": 180
+            }
+
+        await self.update_preview(interaction)
+
+    # =========================================
+    # DOWNLOAD AVATAR
+    # =========================================
+
+    async def download_avatar(
+        self,
+        avatar_url
+    ):
+
+        try:
+
+            async with aiohttp.ClientSession() as session:
+
+                async with session.get(
+                    avatar_url
+                ) as response:
+
+                    if response.status != 200:
+
+                        print(
+                            f"❌ Avatar download returned HTTP {response.status}"
+                        )
+
+                        return None
+
+                    return await response.read()
+
+        except Exception as e:
+
+            print(
+                f"❌ Avatar download error: {e}"
+            )
+
+            return None
+
+    # =========================================
+    # MAKE CIRCULAR AVATAR
+    # =========================================
+
+    def make_circular_avatar(
+        self,
+        avatar_data,
+        size
+    ):
+        """
+        Converts a Discord avatar into a circular
+        transparent PNG.
+
+        The transparent corners allow the avatar
+        to sit inside the blank circles on the
+        artwork.
+        """
+
+        # -----------------------------------------
+        # OPEN AVATAR
+        # -----------------------------------------
+
+        avatar_image = Image.open(
+            io.BytesIO(avatar_data)
+        ).convert("RGBA")
+
+        # -----------------------------------------
+        # RESIZE
+        # -----------------------------------------
+
+        avatar_image = avatar_image.resize(
+            (
+                size,
+                size
+            ),
+            Image.Resampling.LANCZOS
+        )
+
+        # -----------------------------------------
+        # CREATE CIRCULAR MASK
+        # -----------------------------------------
+
+        mask = Image.new(
+            "L",
+            (
+                size,
+                size
+            ),
+            0
+        )
+
+        mask_draw = ImageDraw.Draw(
+            mask
+        )
+
+        mask_draw.ellipse(
+            (
+                0,
+                0,
+                size - 1,
+                size - 1
+            ),
+            fill=255
+        )
+
+        # -----------------------------------------
+        # APPLY MASK
+        # -----------------------------------------
+
+        avatar_image.putalpha(
+            mask
+        )
+
+        return avatar_image
+
+    # =========================================
+    # CREATE PREVIEW
+    # =========================================
+
+    async def render_image(self):
+
+        artwork_image = Image.open(
+            io.BytesIO(self.artwork_data)
+        ).convert("RGBA")
+
+        # -----------------------------------------
+        # KILL / SUPER KILL
+        # -----------------------------------------
+
+        if self.phrase_type in (
+            "kill",
+            "super kill"
+        ):
+
+            # -------------------------------------
+            # KILLER
+            # -------------------------------------
+
+            killer_data = await self.download_avatar(
+                self.killer_avatar_url
+            )
+
+            if killer_data:
+
+                killer_config = (
+                    self.avatar_config["killer"]
+                )
+
+                killer_image = (
+                    self.make_circular_avatar(
+                        killer_data,
+                        killer_config["size"]
+                    )
+                )
+
+                killer_x = int(
+                    killer_config["x"]
+                    - killer_config["size"] / 2
+                )
+
+                killer_y = int(
+                    killer_config["y"]
+                    - killer_config["size"] / 2
+                )
+
+                artwork_image.alpha_composite(
+                    killer_image,
+                    (
+                        killer_x,
+                        killer_y
+                    )
+                )
+
+            # -------------------------------------
+            # VICTIM
+            # -------------------------------------
+
+            victim_data = await self.download_avatar(
+                self.victim_avatar_url
+            )
+
+            if victim_data:
+
+                victim_config = (
+                    self.avatar_config["victim"]
+                )
+
+                victim_image = (
+                    self.make_circular_avatar(
+                        victim_data,
+                        victim_config["size"]
+                    )
+                )
+
+                victim_x = int(
+                    victim_config["x"]
+                    - victim_config["size"] / 2
+                )
+
+                victim_y = int(
+                    victim_config["y"]
+                    - victim_config["size"] / 2
+                )
+
+                artwork_image.alpha_composite(
+                    victim_image,
+                    (
+                        victim_x,
+                        victim_y
+                    )
+                )
+
+        # -----------------------------------------
+        # ONE AVATAR
+        # -----------------------------------------
+
+        else:
+
+            player_data = await self.download_avatar(
+                self.killer_avatar_url
+            )
+
+            if player_data:
+
+                player_config = (
+                    self.avatar_config["player"]
+                )
+
+                player_image = (
+                    self.make_circular_avatar(
+                        player_data,
+                        player_config["size"]
+                    )
+                )
+
+                player_x = int(
+                    player_config["x"]
+                    - player_config["size"] / 2
+                )
+
+                player_y = int(
+                    player_config["y"]
+                    - player_config["size"] / 2
+                )
+
+                artwork_image.alpha_composite(
+                    player_image,
+                    (
+                        player_x,
+                        player_y
+                    )
+                )
+
+        # -----------------------------------------
+        # OUTPUT PNG
+        # -----------------------------------------
+
+        output = io.BytesIO()
+
+        artwork_image.save(
+            output,
+            format="PNG"
+        )
+
+        output.seek(0)
+
+        return output
+
+    # =========================================
+    # UPDATE PREVIEW
+    # =========================================
+
+    async def update_preview(
+        self,
+        interaction
+    ):
+
+        # IMPORTANT:
+        # Acknowledge the interaction immediately.
+        await interaction.response.defer()
+
+        try:
+
+            image = await self.render_image()
+
+            file = discord.File(
+                image,
+                filename="artwork_preview.png"
+            )
+
+            # -------------------------------------
+            # ACTIVE AVATAR TEXT
+            # -------------------------------------
+
+            if self.phrase_type in (
+                "kill",
+                "super kill"
+            ):
+
+                if self.active_avatar == "killer":
+
+                    active_text = (
+                        "🔪 **Active Avatar: Killer**"
+                    )
+
+                else:
+
+                    active_text = (
+                        "💀 **Active Avatar: Victim**"
+                    )
+
+            else:
+
+                active_text = (
+                    "👤 **Active Avatar: Player**"
+                )
+
+            # -------------------------------------
+            # CONFIG DISPLAY
+            # -------------------------------------
+
+            config_text = json.dumps(
+                self.avatar_config,
+                indent=2
+            )
+
+            # -------------------------------------
+            # UPDATE MESSAGE
+            # -------------------------------------
+
+            await interaction.edit_original_response(
+                content=(
+                    "🖼️ **Artwork Positioning**\n\n"
+                    f"🎰 **Provider:** `{self.provider}`\n"
+                    f"🎮 **Slot:** `{self.slot}`\n"
+                    f"📝 **Type:** `{self.phrase_type}`\n\n"
+                    f"💬 **Phrase:**\n"
+                    f"> {self.phrase}\n\n"
+                    f"{active_text}\n\n"
+                    "Use the buttons to position the avatar.\n\n"
+                    "For **Kill / Super Kill**:\n"
+                    "🔪 Killer = first avatar\n"
+                    "💀 Victim = second avatar\n\n"
+                    "When everything looks correct, "
+                    "press **💾 Save**.\n\n"
+                    f"```json\n"
+                    f"{config_text}"
+                    f"\n```"
+                ),
+                attachments=[
+                    file
+                ],
+                view=self
+            )
+
+        except Exception as e:
+
+            print(
+                f"❌ Artwork preview error: {e}"
+            )
+
+            await interaction.edit_original_response(
+                content=(
+                    "❌ **Failed to generate artwork preview.**\n\n"
+                    f"`{e}`"
+                ),
+                view=self
+            )
+
+    # =========================================
+    # SAVE CONFIGURATION
+    # =========================================
+
+    async def save_configuration(
+        self,
+        interaction
+    ):
+
+        await interaction.response.defer(
+            ephemeral=True
+        )
+
+        try:
+
+            # -------------------------------------
+            # CONVERT CONFIG TO JSON
+            # -------------------------------------
+
+            avatar_config_json = json.dumps(
+                self.avatar_config
+            )
+
+            # -------------------------------------
+            # OPEN DATABASE
+            # -------------------------------------
+
+            conn = sqlite3.connect(
+                DB_PATH
+            )
+
+            cursor = conn.cursor()
+
+            # -------------------------------------
+            # UPDATE EXACT PHRASE ROW
+            # -------------------------------------
+
+            cursor.execute(
+                f"""
+                UPDATE {self.provider}
+                SET artwork_url = ?,
+                    avatar_config = ?
+                WHERE slot = ?
+                AND type = ?
+                """,
+                (
+                    self.artwork_url,
+                    avatar_config_json,
+                    self.slot,
+                    self.phrase_type
+                )
+            )
+
+            updated_rows = cursor.rowcount
+
+            conn.commit()
+
+            conn.close()
+
+            # -------------------------------------
+            # VERIFY DATABASE UPDATE
+            # -------------------------------------
+
+            if updated_rows != 1:
+
+                await interaction.followup.send(
+                    (
+                        "❌ **Database update failed.**\n\n"
+                        "The artwork was uploaded successfully, "
+                        "but the exact phrase row could not be updated.\n\n"
+                        f"Provider: `{self.provider}`\n"
+                        f"Slot: `{self.slot}`\n"
+                        f"Type: `{self.phrase_type}`"
+                    ),
+                    ephemeral=True
+                )
+
+                return
+
+            # -------------------------------------
+            # DISABLE BUTTONS
+            # -------------------------------------
+
+            for child in self.children:
+
+                child.disabled = True
+
+            # -------------------------------------
+            # SHOW SUCCESS
+            # -------------------------------------
+
+            await interaction.edit_original_response(
+                content=(
+                    "✅ **Artwork Setup Complete!**\n\n"
+                    f"🎰 **Provider:** `{self.provider}`\n"
+                    f"🎮 **Slot:** `{self.slot}`\n"
+                    f"📝 **Type:** `{self.phrase_type}`\n\n"
+                    "🖼️ Artwork uploaded to Supabase.\n"
+                    "💾 Artwork URL saved to SQLite.\n"
+                    "📍 Avatar positions saved to SQLite.\n\n"
+                    "The preview avatar was only used "
+                    "for positioning.\n"
+                    "The actual player's Discord avatar "
+                    "will be used during the Rumble game.\n\n"
+                    f"```json\n"
+                    f"{avatar_config_json}"
+                    f"\n```"
+                ),
+                view=self
+            )
+
+            self.stop()
+
+        except Exception as e:
+
+            print(
+                f"❌ Artwork database save error: {e}"
+            )
+
+            await interaction.followup.send(
+                (
+                    "❌ **Failed to save artwork configuration.**\n\n"
+                    f"`{e}`"
+                ),
+                ephemeral=True
+            )
+
+    # =========================================
+    # CANCEL
+    # =========================================
+
+    async def cancel_configuration(
+        self,
+        interaction
+    ):
+
+        await interaction.response.defer(
+            ephemeral=True
+        )
+
+        # -----------------------------------------
+        # DISABLE BUTTONS
+        # -----------------------------------------
+
+        for child in self.children:
+
+            child.disabled = True
+
+        # -----------------------------------------
+        # UPDATE MESSAGE
+        # -----------------------------------------
+
+        await interaction.edit_original_response(
+            content=(
+                "❌ **Artwork setup cancelled.**\n\n"
+                "No changes were made to the SQLite "
+                "phrase row.\n\n"
+                "The uploaded Supabase artwork file "
+                "may still exist, but the database "
+                "will not point to it."
+            ),
+            view=self
+        )
+
+        self.stop()
+
+
+async def artwork_slot_autocomplete(
+    interaction: discord.Interaction,
+    current: str
+):
+
+    # -----------------------------------------
+    # OWNER ONLY
+    # -----------------------------------------
+
+    if interaction.user.id != DTRIX_ID:
+        return []
+
+    # -----------------------------------------
+    # GET SELECTED PROVIDER
+    # -----------------------------------------
+
+    provider_name = interaction.namespace.provider
+
+    if not provider_name:
+        return []
+
+    # -----------------------------------------
+    # SAFETY CHECK
+    # -----------------------------------------
+
+    allowed_providers = {
+        "pragmatic",
+        "hacksaw",
+        "nolimit_city"
+    }
+
+    if provider_name not in allowed_providers:
+        return []
+
+    # -----------------------------------------
+    # SEARCH SQLITE
+    # -----------------------------------------
+
+    conn = sqlite3.connect(DB_PATH)
+
+    cursor = conn.cursor()
+
+    try:
+
+        cursor.execute(
+            f"""
+            SELECT DISTINCT slot
+            FROM {provider_name}
+            WHERE slot LIKE ?
+            ORDER BY slot
+            LIMIT 25
+            """,
+            (f"%{current}%",)
+        )
+
+        rows = cursor.fetchall()
+
+    finally:
+
+        conn.close()
+
+    # -----------------------------------------
+    # RETURN AUTOCOMPLETE RESULTS
+    # -----------------------------------------
+
+    return [
+        app_commands.Choice(
+            name=row[0],
+            value=row[0]
+        )
+        for row in rows
+        if row[0]
+    ]
+
+# =========================================
+# ARTWORK SETUP
+# =========================================
+
+@bot.tree.command(
+    name="artwork_setup",
+    description="Set up artwork for a Rumble phrase"
+)
+@app_commands.describe(
+    provider="Choose the phrase database",
+    slot="Search for a slot",
+    phrase_type="Choose the phrase type",
+    artwork="Upload the artwork for this phrase"
+)
+@app_commands.choices(
+    provider=[
+        app_commands.Choice(
+            name="Pragmatic",
+            value="pragmatic"
+        ),
+        app_commands.Choice(
+            name="Hacksaw",
+            value="hacksaw"
+        ),
+        app_commands.Choice(
+            name="NoLimit City",
+            value="nolimit_city"
+        )
+    ],
+    phrase_type=[
+        app_commands.Choice(
+            name="Neutral",
+            value="neutral"
+        ),
+        app_commands.Choice(
+            name="Kill",
+            value="kill"
+        ),
+        app_commands.Choice(
+            name="Revive",
+            value="revive"
+        ),
+        app_commands.Choice(
+            name="Suicide",
+            value="suicide"
+        ),
+        app_commands.Choice(
+            name="Power-Up",
+            value="power-up"
+        ),
+        app_commands.Choice(
+            name="Super Kill",
+            value="super kill"
+        )
+    ]
+)
+@app_commands.autocomplete(
+    slot=artwork_slot_autocomplete
+)
+async def artwork_setup(
+    interaction: discord.Interaction,
+    provider: app_commands.Choice[str],
+    slot: str,
+    phrase_type: app_commands.Choice[str],
+    artwork: discord.Attachment
+):
+
+    # =========================================
+    # OWNER CHECK
+    # =========================================
+
+    if interaction.user.id != DTRIX_ID:
+
+        await interaction.response.send_message(
+            "❌ You are not allowed to use this command.",
+            ephemeral=True
+        )
+
+        return
+
+    # =========================================
+    # PROVIDER SAFETY
+    # =========================================
+
+    allowed_providers = {
+        "pragmatic",
+        "hacksaw",
+        "nolimit_city"
+    }
+
+    if provider.value not in allowed_providers:
+
+        await interaction.response.send_message(
+            "❌ Invalid provider.",
+            ephemeral=True
+        )
+
+        return
+
+    # =========================================
+    # IMAGE TYPE CHECK
+    # =========================================
+
+    allowed_content_types = {
+        "image/png",
+        "image/jpeg",
+        "image/webp"
+    }
+
+    if artwork.content_type not in allowed_content_types:
+
+        await interaction.response.send_message(
+            (
+                "❌ Unsupported artwork format.\n\n"
+                "Please upload a PNG, JPG/JPEG, or WEBP image."
+            ),
+            ephemeral=True
+        )
+
+        return
+
+    # =========================================
+    # FIND EXACT PHRASE
+    # =========================================
+
+    conn = sqlite3.connect(DB_PATH)
+
+    cursor = conn.cursor()
+
+    try:
+
+        cursor.execute(
+            f"""
+            SELECT phrase
+            FROM {provider.value}
+            WHERE slot = ?
+            AND type = ?
+            LIMIT 1
+            """,
+            (
+                slot,
+                phrase_type.value
+            )
+        )
+
+        row = cursor.fetchone()
+
+    finally:
+
+        conn.close()
+
+    if row is None:
+
+        await interaction.response.send_message(
+            (
+                "❌ **Phrase not found.**\n\n"
+                f"Provider: `{provider.value}`\n"
+                f"Slot: `{slot}`\n"
+                f"Type: `{phrase_type.value}`"
+            ),
+            ephemeral=True
+        )
+
+        return
+
+    phrase = row[0]
+
+    # =========================================
+    # ACKNOWLEDGE COMMAND
+    # =========================================
+
+    await interaction.response.defer(
+        ephemeral=True
+    )
+
+    # =========================================
+    # READ ARTWORK
+    # =========================================
+
+    try:
+
+        artwork_data = await artwork.read()
+
+    except Exception as e:
+
+        await interaction.followup.send(
+            (
+                "❌ Failed to read the uploaded artwork.\n\n"
+                f"`{e}`"
+            ),
+            ephemeral=True
+        )
+
+        return
+
+    # =========================================
+    # SAFE FILE NAME
+    # =========================================
+
+    safe_filename = artwork.filename.replace(
+        " ",
+        "_"
+    )
+
+    # =========================================
+    # SUPABASE PATH
+    # =========================================
+
+    file_path = (
+        f"{provider.value}/"
+        f"{slot}/"
+        f"{phrase_type.value}/"
+        f"{safe_filename}"
+    )
+
+    # =========================================
+    # UPLOAD TO SUPABASE
+    # =========================================
+
+    try:
+
+        supabase.storage.from_(
+            "rumble-artwork"
+        ).upload(
+            file_path,
+            artwork_data,
+            {
+                "content-type": (
+                    artwork.content_type
+                    or "image/png"
+                ),
+                "upsert": "true"
+            }
+        )
+
+    except Exception as e:
+
+        print(
+            f"❌ Supabase artwork upload error: {e}"
+        )
+
+        await interaction.followup.send(
+            (
+                "❌ **Failed to upload artwork to Supabase.**\n\n"
+                f"`{e}`"
+            ),
+            ephemeral=True
+        )
+
+        return
+
+    # =========================================
+    # PUBLIC SUPABASE URL
+    # =========================================
+
+    encoded_file_path = quote(
+        file_path,
+        safe="/"
+    )
+
+    artwork_url = (
+        f"{SUPABASE_URL}"
+        f"/storage/v1/object/public/"
+        f"rumble-artwork/"
+        f"{encoded_file_path}"
+    )
+
+    # =========================================
+    # GET PREVIEW AVATARS
+    # =========================================
+
+    killer_avatar_url = (
+        interaction.user.display_avatar.url
+    )
+
+    victim_avatar_url = (
+        interaction.user.display_avatar.url
+    )
+
+    # =========================================
+    # CREATE POSITIONING VIEW
+    # =========================================
+
+    view = ArtworkPositionView(
+        interaction=interaction,
+        artwork_url=artwork_url,
+        artwork_data=artwork_data,
+        provider=provider.value,
+        slot=slot,
+        phrase_type=phrase_type.value,
+        phrase=phrase,
+        killer_avatar_url=killer_avatar_url,
+        victim_avatar_url=victim_avatar_url
+    )
+
+    # =========================================
+    # GENERATE FIRST PREVIEW
+    # =========================================
+
+    try:
+
+        image = await view.render_image()
+
+        file = discord.File(
+            image,
+            filename="artwork_preview.png"
+        )
+
+    except Exception as e:
+
+        print(
+            f"❌ Initial artwork preview error: {e}"
+        )
+
+        await interaction.followup.send(
+            (
+                "❌ Artwork uploaded successfully, "
+                "but the preview could not be generated.\n\n"
+                f"`{e}`\n\n"
+                f"Supabase URL:\n{artwork_url}"
+            ),
+            ephemeral=True
+        )
+
+        return
+
+    # =========================================
+    # FIRST POSITIONING MESSAGE
+    # =========================================
+
+    if phrase_type.value in (
+        "kill",
+        "super kill"
+    ):
+
+        active_text = "🔪 **Active:** Killer"
+
+    else:
+
+        active_text = "👤 **Active:** Player"
+
+    config_text = json.dumps(
+        view.avatar_config,
+        indent=2
+    )
+
+    await interaction.followup.send(
+        (
+            "🖼️ **Artwork Positioning**\n\n"
+            f"🎰 **Provider:** `{provider.value}`\n"
+            f"🎮 **Slot:** `{slot}`\n"
+            f"📝 **Type:** `{phrase_type.value}`\n\n"
+            f"💬 **Phrase:**\n"
+            f"> {phrase}\n\n"
+            f"{active_text}\n\n"
+            "Use the buttons to position the avatar(s).\n"
+            "For Kill/Super Kill, use **🔪 Killer** "
+            "and **💀 Victim** to switch between avatars.\n\n"
+            "When everything looks correct, press **💾 Save**.\n\n"
+            f"```json\n{config_text}\n```"
+        ),
+        file=file,
+        view=view,
+        ephemeral=True
+    )
+
+async def render_rumble_artwork(
+    artwork_url,
+    avatar_config,
+    player_avatar_url=None,
+    killer_avatar_url=None,
+    victim_avatar_url=None
+):
+    """
+    Download artwork and player avatars, then place the avatars
+    according to the saved avatar_config.
+    """
+
+    if not artwork_url or not avatar_config:
+        return None
+
+    try:
+        # -----------------------------------------
+        # DOWNLOAD ARTWORK
+        # -----------------------------------------
+
+        async with aiohttp.ClientSession() as session:
+
+            async with session.get(artwork_url) as response:
+
+                if response.status != 200:
+                    print(
+                        f"❌ Failed to download artwork: "
+                        f"HTTP {response.status}"
+                    )
+                    return None
+
+                artwork_data = await response.read()
+
+            # -----------------------------------------
+            # LOAD ARTWORK
+            # -----------------------------------------
+
+            artwork = Image.open(
+                io.BytesIO(artwork_data)
+            ).convert("RGBA")
+
+            # -----------------------------------------
+            # HELPER: DOWNLOAD AVATAR
+            # -----------------------------------------
+
+            async def download_avatar(url):
+
+                if not url:
+                    return None
+
+                async with session.get(url) as response:
+
+                    if response.status != 200:
+                        print(
+                            f"❌ Failed to download avatar: "
+                            f"HTTP {response.status}"
+                        )
+                        return None
+
+                    return await response.read()
+
+            # -----------------------------------------
+            # HELPER: CIRCULAR AVATAR
+            # -----------------------------------------
+
+            def make_circular_avatar(avatar_data, size):
+
+                avatar_image = Image.open(
+                    io.BytesIO(avatar_data)
+                ).convert("RGBA")
+
+                avatar_image = avatar_image.resize(
+                    (size, size),
+                    Image.Resampling.LANCZOS
+                )
+
+                mask = Image.new(
+                    "L",
+                    (size, size),
+                    0
+                )
+
+                mask_draw = ImageDraw.Draw(mask)
+
+                mask_draw.ellipse(
+                    (0, 0, size - 1, size - 1),
+                    fill=255
+                )
+
+                avatar_image.putalpha(mask)
+
+                return avatar_image
+
+            # -----------------------------------------
+            # KILL / SUPER KILL
+            # -----------------------------------------
+
+            if (
+                "killer" in avatar_config
+                and "victim" in avatar_config
+            ):
+
+                killer_config = avatar_config["killer"]
+                victim_config = avatar_config["victim"]
+
+                killer_data = await download_avatar(
+                    killer_avatar_url
+                )
+
+                victim_data = await download_avatar(
+                    victim_avatar_url
+                )
+
+                if killer_data:
+
+                    killer_image = make_circular_avatar(
+                        killer_data,
+                        killer_config["size"]
+                    )
+
+                    x = killer_config["x"]
+                    y = killer_config["y"]
+
+                    artwork.alpha_composite(
+                        killer_image,
+                        (
+                            int(x - killer_config["size"] / 2),
+                            int(y - killer_config["size"] / 2)
+                        )
+                    )
+
+                if victim_data:
+
+                    victim_image = make_circular_avatar(
+                        victim_data,
+                        victim_config["size"]
+                    )
+
+                    x = victim_config["x"]
+                    y = victim_config["y"]
+
+                    artwork.alpha_composite(
+                        victim_image,
+                        (
+                            int(x - victim_config["size"] / 2),
+                            int(y - victim_config["size"] / 2)
+                        )
+                    )
+
+            # -----------------------------------------
+            # PLAYER / NORMAL PHRASE
+            # -----------------------------------------
+
+            elif "player" in avatar_config:
+
+                player_config = avatar_config["player"]
+
+                player_data = await download_avatar(
+                    player_avatar_url
+                )
+
+                if player_data:
+
+                    player_image = make_circular_avatar(
+                        player_data,
+                        player_config["size"]
+                    )
+
+                    x = player_config["x"]
+                    y = player_config["y"]
+
+                    artwork.alpha_composite(
+                        player_image,
+                        (
+                            int(x - player_config["size"] / 2),
+                            int(y - player_config["size"] / 2)
+                        )
+                    )
+
+            # -----------------------------------------
+            # SAVE FINAL IMAGE
+            # -----------------------------------------
+
+            output = io.BytesIO()
+
+            artwork.save(
+                output,
+                format="PNG"
+            )
+
+            output.seek(0)
+
+            return output
+
+    except Exception as e:
+
+        print(
+            f"❌ Error rendering Rumble artwork: {e}"
+        )
+
+        return None
+
+
+async def send_rumble_artwork(
+    channel,
+    artwork_url,
+    avatar_config,
+    player=None,
+    killer=None,
+    victim=None
+):
+
+    """
+    Render and send artwork with the appropriate Discord avatars.
+    """
+
+    if not artwork_url or not avatar_config:
+        return
+
+    rendered_artwork = await render_rumble_artwork(
+        artwork_url=artwork_url,
+        avatar_config=avatar_config,
+        player_avatar_url=(
+            player.display_avatar.url
+            if player
+            else None
+        ),
+        killer_avatar_url=(
+            killer.display_avatar.url
+            if killer
+            else None
+        ),
+        victim_avatar_url=(
+            victim.display_avatar.url
+            if victim
+            else None
+        )
+    )
+
+    if not rendered_artwork:
+        return
+
+    artwork_file = discord.File(
+        rendered_artwork,
+        filename="rumble_artwork.png"
+    )
+
+    artwork_embed = discord.Embed(
+        title="🖼️ Rumble Artwork",
+        color=discord.Color.blurple()
+    )
+
+    artwork_embed.set_image(
+        url="attachment://rumble_artwork.png"
+    )
+
+    await channel.send(
+        embed=artwork_embed,
+        file=artwork_file
+    )
 
 
 if __name__ == "__main__":
