@@ -1448,7 +1448,7 @@ async def rumble_start(interaction: discord.Interaction, provider: app_commands.
                 await asyncio.sleep(random.randint(3, 5))
                 event_type = random.choices(
                     ["kill", "neutral", "revive", "suicide", "power-up", "super kill"],
-                    weights=[25, 30, 15, 10, 10, 10],
+                    weights=[35, 25, 5, 20, 5, 10],
                     k=1
                 )[0]
 
