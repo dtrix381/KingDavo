@@ -15514,16 +15514,39 @@ async def get_instagram_browser():
             "--no-sandbox",
             "--disable-setuid-sandbox",
             "--disable-dev-shm-usage",
-            "--disable-gpu"
+            "--disable-gpu",
+
+            # -----------------------------------------
+            # MEMORY OPTIMIZATION
+            # -----------------------------------------
+
+            "--disable-extensions",
+            "--disable-background-networking",
+            "--disable-background-timer-throttling",
+            "--disable-backgrounding-occluded-windows",
+            "--disable-breakpad",
+            "--disable-component-extensions-with-background-pages",
+            "--disable-features=Translate,BackForwardCache",
+            "--disable-hang-monitor",
+            "--disable-ipc-flooding-protection",
+            "--disable-renderer-backgrounding",
+            "--no-first-run",
+            "--no-zygote",
+            "--renderer-process-limit=2",
+            "--js-flags=--max-old-space-size=128"
         ]
     )
 
-    session_path = "/data/instagram_session.json"
+    session_path = (
+        "/data/instagram_session.json"
+        if os.path.exists("/data")
+        else "instagram_session.json"
+    )
 
     context_kwargs = {
         "viewport": {
-            "width": 1280,
-            "height": 900
+            "width": 1000,
+            "height": 700
         },
         "locale": "en-US",
         "user_agent": (
