@@ -101,6 +101,7 @@ YOUTUBE_DISCORD_CHANNEL_ID = 1176520510515970054
 X_DISCORD_CHANNEL_ID = 1176520510515970054
 
 LEAVE_LOG_CHANNEL_ID = 1545441471774195782
+WELCOME_CHANNEL_ID = 1534145199670824970
 
 WILD_GIVEAWAY_MANAGER_IDS = {
     1376017792209387520,
@@ -482,6 +483,9 @@ async def find_used_invite(guild):
 async def process_invite_join(member):
 
     guild = member.guild
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
 
     invite = await find_used_invite(guild)
 
