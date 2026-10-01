@@ -85,6 +85,7 @@ conn.commit()
 bot = commands.Bot(command_prefix="!", intents=intents)
 JOIN_EMOJI = "🎰"
 manual_games = {}  # Stores {channel_id: (players, provider_name)}
+invite_cache = {}
 
 INSTAGRAM_USERNAME = "wildlinesofficial"
 INSTAGRAM_PROFILE_URL = (
@@ -209,6 +210,9 @@ async def on_ready():
     bot.add_view(KickLinkView())
     bot.add_view(TreasureHuntControlView())
     bot.add_view(TreasureHuntSubmissionView())
+    bot.add_view(InviteGeneratorView())
+
+    await load_invite_cache()
 
     streamers = await load_streamers()
 
@@ -393,7 +397,249 @@ async def on_message(message):
 
     await bot.process_commands(message)
     
+# =========================================
+# LOAD INVITE CACHE
+# =========================================
 
+async def load_invite_cache():
+
+    global invite_cache
+
+    invite_cache = {}
+
+    for guild in bot.guilds:
+
+        try:
+
+            invites = await guild.invites()
+
+            invite_cache[guild.id] = {
+                invite.code: invite.uses
+                for invite in invites
+            }
+
+            print(
+                f"🔗 Loaded {len(invites)} invites for {guild.name}"
+            )
+
+        except Exception as e:
+
+            print(
+                f"❌ Failed to load invites for {guild.name}: {e}"
+            )
+
+# =========================================
+# FIND USED INVITE
+# =========================================
+
+async def find_used_invite(guild):
+
+    try:
+
+        old_invites = invite_cache.get(
+            guild.id,
+            {}
+        )
+
+        new_invites = await guild.invites()
+
+        for invite in new_invites:
+
+            old_uses = old_invites.get(
+                invite.code,
+                0
+            )
+
+            new_uses = invite.uses or 0
+
+            if new_uses > old_uses:
+
+                invite_cache[guild.id] = {
+                    inv.code: inv.uses
+                    for inv in new_invites
+                }
+
+                return invite
+
+        invite_cache[guild.id] = {
+            inv.code: inv.uses
+            for inv in new_invites
+        }
+
+    except Exception as e:
+
+        print(
+            f"❌ Invite detection error: {e}"
+        )
+
+    return None
+
+
+# =========================================
+# INVITE REFERRAL TRACKING
+# =========================================
+
+async def process_invite_join(member):
+
+    guild = member.guild
+
+    invite = await find_used_invite(guild)
+
+    if invite is None:
+
+        print(
+            f"🔗 Could not determine invite used by {member}"
+        )
+
+        return
+
+    invite_code = invite.code
+
+    # -----------------------------------------
+    # FIND OWNER OF OUR PERSONAL INVITE
+    # -----------------------------------------
+
+    cursor.execute("""
+        SELECT member_id
+        FROM invite_links
+        WHERE guild_id = ?
+        AND invite_code = ?
+    """, (
+        guild.id,
+        invite_code
+    ))
+
+    row = cursor.fetchone()
+
+    if row is None:
+
+        print(
+            f"🔗 Invite {invite_code} is not one of our "
+            f"personal referral invites."
+        )
+
+        return
+
+    inviter_id = row[0]
+
+    # -----------------------------------------
+    # DETERMINE REJOIN
+    # -----------------------------------------
+
+    cursor.execute("""
+        SELECT COUNT(*)
+        FROM invite_referrals
+        WHERE guild_id = ?
+        AND member_id = ?
+    """, (
+        guild.id,
+        member.id
+    ))
+
+    join_count = cursor.fetchone()[0]
+
+    is_rejoin = join_count > 0
+
+    # -----------------------------------------
+    # SAVE JOIN
+    # -----------------------------------------
+
+    cursor.execute("""
+        INSERT INTO invite_referrals (
+            guild_id,
+            member_id,
+            inviter_id,
+            invite_code,
+            joined_at
+        )
+        VALUES (?, ?, ?, ?, ?)
+    """, (
+        guild.id,
+        member.id,
+        inviter_id,
+        invite_code,
+        discord.utils.utcnow().isoformat()
+    ))
+
+    conn.commit()
+
+    # -----------------------------------------
+    # GET WELCOME CHANNEL
+    # -----------------------------------------
+
+    welcome_channel = guild.get_channel(
+        WELCOME_CHANNEL_ID
+    )
+
+    if welcome_channel is None:
+
+        print(
+            "❌ WELCOME_CHANNEL_ID channel not found."
+        )
+
+        return
+
+    inviter = guild.get_member(
+        inviter_id
+    )
+
+    # -----------------------------------------
+    # BUILD MESSAGE
+    # -----------------------------------------
+
+    if inviter:
+
+        if is_rejoin:
+
+            title = "🔄 Welcome Back!"
+
+            description = (
+                f"Welcome back {member.mention}!\n\n"
+                f"You joined again using "
+                f"{inviter.mention}'s invite link! 🔗"
+            )
+
+        else:
+
+            title = "🎉 New Member!"
+
+            description = (
+                f"Welcome {member.mention}!\n\n"
+                f"You joined using "
+                f"{inviter.mention}'s invite link! 🔗"
+            )
+
+    else:
+
+        title = (
+            "🔄 Welcome Back!"
+            if is_rejoin
+            else "🎉 New Member!"
+        )
+
+        description = (
+            f"Welcome {member.mention}!\n\n"
+            f"Invite referral recorded."
+        )
+
+    embed = discord.Embed(
+        title=title,
+        description=description,
+        color=discord.Color.green()
+    )
+
+    embed.set_thumbnail(
+        url=member.display_avatar.url
+    )
+
+    embed.set_footer(
+        text=f"Invite code: {invite_code}"
+    )
+
+    await welcome_channel.send(
+        embed=embed
+    )
+    
 async def get_all_phrases(provider):
     phrases = {}
 
@@ -18145,5 +18391,225 @@ async def send_rumble_artwork(
     )
 
 
+# =========================================
+# PERSONAL INVITE GENERATOR
+# =========================================
+
+class InviteGeneratorView(discord.ui.View):
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Get My Invite Link",
+        style=discord.ButtonStyle.primary,
+        emoji="🔗",
+        custom_id="invite_generator_get_link"
+    )
+    async def get_invite(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        guild = interaction.guild
+
+        if guild is None:
+            await interaction.response.send_message(
+                "❌ This button can only be used inside the server.",
+                ephemeral=True
+            )
+            return
+
+        member = interaction.user
+
+        # -----------------------------------------
+        # CHECK DATABASE FOR EXISTING INVITE
+        # -----------------------------------------
+
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT invite_code
+            FROM invite_links
+            WHERE guild_id = ?
+            AND member_id = ?
+        """, (
+            guild.id,
+            member.id
+        ))
+
+        row = cursor.fetchone()
+
+        # -----------------------------------------
+        # EXISTING INVITE
+        # -----------------------------------------
+
+        if row:
+
+            invite_code = row[0]
+
+            invite_url = f"https://discord.gg/{invite_code}"
+
+            # Make sure the invite still exists
+            try:
+                existing_invites = await guild.invites()
+
+                existing = next(
+                    (
+                        inv
+                        for inv in existing_invites
+                        if inv.code == invite_code
+                    ),
+                    None
+                )
+
+                if existing:
+
+                    await interaction.response.send_message(
+                        f"🔗 **Your personal invite link:**\n"
+                        f"{invite_url}\n\n"
+                        f"Share this link with your friends!",
+                        ephemeral=True
+                    )
+
+                    return
+
+            except Exception as e:
+
+                print(
+                    f"[Invite] Error checking existing invite: {e}"
+                )
+
+        # -----------------------------------------
+        # CREATE NEW PERMANENT INVITE
+        # -----------------------------------------
+
+        try:
+
+            invite = await interaction.channel.create_invite(
+                max_age=0,
+                max_uses=0,
+                unique=True,
+                reason=f"Personal invite for {member}"
+            )
+
+        except Exception as e:
+
+            print(
+                f"[Invite] Failed to create invite: {e}"
+            )
+
+            await interaction.response.send_message(
+                "❌ I couldn't create your invite link. "
+                "Please contact an administrator.",
+                ephemeral=True
+            )
+
+            return
+
+        invite_code = invite.code
+
+        invite_url = f"https://discord.gg/{invite_code}"
+
+        # -----------------------------------------
+        # SAVE DATABASE
+        # -----------------------------------------
+
+        cursor.execute("""
+            INSERT OR REPLACE INTO invite_links (
+                guild_id,
+                member_id,
+                invite_code,
+                created_at
+            )
+            VALUES (?, ?, ?, ?)
+        """, (
+            guild.id,
+            member.id,
+            invite_code,
+            discord.utils.utcnow().isoformat()
+        ))
+
+        conn.commit()
+
+        # -----------------------------------------
+        # UPDATE CACHE
+        # -----------------------------------------
+
+        invite_cache.setdefault(
+            guild.id,
+            {}
+        )
+
+        invite_cache[guild.id][invite_code] = invite.uses
+
+        # -----------------------------------------
+        # SEND LINK
+        # -----------------------------------------
+
+        await interaction.response.send_message(
+            f"🔗 **Your personal invite link:**\n"
+            f"{invite_url}\n\n"
+            f"Share this link with your friends!\n"
+            f"Anyone who joins using it will be counted as your referral.",
+            ephemeral=True
+        )
+
+# =========================================
+# INVITE GENERATOR COMMAND
+# =========================================
+
+@bot.tree.command(
+    name="invite_generator",
+    description="Create the permanent invite generator panel."
+)
+async def invite_generator(interaction: discord.Interaction):
+
+    # -----------------------------------------
+    # OWNER ONLY
+    # -----------------------------------------
+
+    if interaction.user.id != DTRIX_ID:
+
+        await interaction.response.send_message(
+            "❌ You are not allowed to use this command.",
+            ephemeral=True
+        )
+
+        return
+
+    embed = discord.Embed(
+        title="🔗 Personal Invite Generator",
+        description=(
+            "Want to invite your friends?\n\n"
+            "Click the button below to get your **personal invite link**.\n\n"
+            "🔗 Your invite link never expires\n"
+            "♾️ Unlimited uses\n"
+            "📊 Your referrals are automatically tracked\n\n"
+            "**Click the button below to get your link.**"
+        ),
+        color=discord.Color.blue()
+    )
+
+    embed.set_footer(
+        text="Your personal invite link is unique to you."
+    )
+
+    await interaction.response.send_message(
+        embed=embed,
+        view=InviteGeneratorView()
+    )
+
+@bot.event
+async def on_member_join(member):
+
+    print(
+        f"[Invite] {member} joined the server."
+    )
+
+    await process_invite_join(member)
+    
 if __name__ == "__main__":
     bot.run(TOKEN)
