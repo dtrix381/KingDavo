@@ -18717,8 +18717,22 @@ AUTO_POSTS = [
             "Want to be eligible for our weekly giveaways and rewards? 🎁\n\n"
             "You must deposit at least **$50 during the week** "
             "to qualify for our giveaway and reward programs.\n\n"
-            "Make sure you meet the weekly requirement before "
-            "claiming any rewards."
+
+            
+            "💰 **PRIZE PAYOUT DAYS**\n"
+            "Prizes are sent **ONLY on Tuesdays and Fridays**.\n\n"
+
+            "If you win a prize, please be patient and wait for the "
+            "next scheduled payout day. Before your prize is sent, "
+            "your eligibility and requirements will be checked.\n\n"
+
+            "⚠️ **IMPORTANT:** Winning a giveaway or event does not "
+            "automatically guarantee a payout. If you are found to be "
+            "ineligible or have not met the required conditions, "
+            "your prize may be **voided**.\n\n"
+
+            "Make sure you meet all requirements and remain eligible "
+            "before claiming your reward. 🎁🔥"
         )
     },
 
