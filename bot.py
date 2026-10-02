@@ -228,6 +228,25 @@ async def on_ready():
         check_stream.start()
         print("▶️ Kick stream checker started")
 
+    # -----------------------------------------
+    # DISCORD AUTO PROMOTION POSTS
+    # -----------------------------------------
+
+    if not hasattr(
+        bot,
+        "auto_promotion_post_task"
+    ):
+
+        bot.auto_promotion_post_task = (
+            asyncio.create_task(
+                auto_promotion_post_task()
+            )
+        )
+
+        print(
+            "📢 Discord auto promotion scheduler started"
+        )
+        
     if not instagram_checker.is_running():
         instagram_checker.start()
 
@@ -18614,6 +18633,426 @@ async def on_member_join(member):
     )
 
     await process_invite_join(member)
-    
+
+
+# =========================================
+# DISCORD AUTO PROMOTION POSTS
+# =========================================
+
+AUTO_POST_INTERVAL = 6 * 60 * 60  # 6 hours
+
+AUTO_POSTS = [
+
+    # -----------------------------------------
+    # POST 1 - CASINO SIGN-UP
+    # -----------------------------------------
+
+    {
+        "title": "🎰 READY TO PLAY? SIGN UP WITH WILDLINES!",
+        "content": (
+            "🔥 Looking for your next casino to play?\n\n"
+            "Join **Gamdom** and start playing your favorite casino games, "
+            "slots, and more! 🎰💰\n\n"
+
+            "**🎰 SIGN UP WITH WILDLINES**\n"
+            "Use our WildLines referral link when creating your account:\n"
+            "👉 https://gamdom.com/r/wildlines\n\n"
+
+            "**💰 SIGN UP WITH BIGBOYBETS**\n"
+            "You can also join through our BIGBOYBETS affiliate link:\n"
+            "👉 https://gamdom.com/landing?aff=bigboybets\n\n"
+
+            "🎯 Create your account, make your deposit, and start playing!\n\n"
+            "🔥 **Join Gamdom. Play your favorite games. "
+            "Be part of WildLines.**"
+        )
+    },
+
+    # -----------------------------------------
+    # POST 2 - SOCIALS
+    # -----------------------------------------
+
+    {
+        "title": "🌐 DON'T MISS WHAT'S HAPPENING AT WILDLINES!",
+        "content": (
+            "🔥 The Discord is only part of WildLines.\n\n"
+            "Want to catch the streams, giveaways, casino content, "
+            "big wins, announcements, and everything happening in the "
+            "WildLines community?\n\n"
+
+            "Make sure you're following us everywhere! 👇\n\n"
+
+            "🎮 **KICK**\n"
+            "Catch WildLines live and watch the action unfold.\n"
+            "👉 https://kick.com/wildlines\n\n"
+
+            "🐦 **X / TWITTER**\n"
+            "Follow us for updates, announcements, giveaways, and more.\n"
+            "👉 https://x.com/WildLinesX\n\n"
+
+            "📸 **INSTAGRAM**\n"
+            "Follow our Instagram for WildLines content and updates.\n"
+            "👉 https://www.instagram.com/wildlinesofficial\n\n"
+
+            "▶️ **YOUTUBE**\n"
+            "Don't miss our videos, highlights, and WildLines content.\n"
+            "👉 https://www.youtube.com/@WildLinesOfficial\n\n"
+
+            "🌐 **WILDLINES WEBSITE**\n"
+            "Everything WildLines in one place.\n"
+            "👉 https://wildlines.gg/\n\n"
+
+            "🔥 Follow us everywhere and stay connected with the WildLines "
+            "community!"
+        )
+    },
+
+    # -----------------------------------------
+    # POST 3 - GIVEAWAY / REWARD ELIGIBILITY
+    # -----------------------------------------
+
+    {
+        "title": "🎁 GIVEAWAY & REWARD ELIGIBILITY",
+        "content": (
+            "Want to be eligible for our weekly giveaways and rewards? 🎁\n\n"
+            "You must deposit at least **$50 during the week** "
+            "to qualify for our giveaway and reward programs.\n\n"
+            "Make sure you meet the weekly requirement before "
+            "claiming any rewards."
+        )
+    },
+
+    # -----------------------------------------
+    # POST 4 - CASINO RUMBLE & POKER
+    # -----------------------------------------
+
+    {
+        "title": "🎰 JOIN CASINO RUMBLE & POKER",
+        "content": (
+            "Want to compete for prizes? 🔥\n\n"
+            "Get the <@&1222265292747444256> role to join:\n\n"
+            "🎰 Weekly Casino Rumble\n"
+            "<#1534864949002637472>\n\n"
+            "🃏 Weekly Poker\n"
+            "<#1534897940534132966>\n\n"
+            "There are prizes throughout the events, including:\n"
+            "🏆 Top 3 Poker winners\n"
+            "💰 Poker bounties\n"
+            "🎰 Weekly Rumble winner\n"
+            "🏆 Monthly Rumble winner\n\n"
+            "Get your role and join the games!"
+        )
+    },
+
+    # -----------------------------------------
+    # POST 5 - WILD TAG
+    # -----------------------------------------
+
+    {
+        "title": "🔥 GET THE WILD TAG",
+        "content": (
+            "Show your WildLines pride! 🔥\n\n"
+            "Get the **WILD** tag and join our weekly giveaways:\n"
+            "<#1351468864873041964>\n\n"
+            "Equip the Official WildLines Discord Tag, "
+            "represent the community, and become eligible "
+            "for our weekly giveaways! 🎁"
+        )
+    },
+
+    # -----------------------------------------
+    # POST 6 - DISCORD RULES
+    # -----------------------------------------
+
+    {
+        "title": "📜 WILDLINES DISCORD RULES",
+        "content": (
+            "Please follow these basic rules to keep our Discord "
+            "community fair, safe, and enjoyable for everyone.\n\n"
+            "1️⃣ **Respect Everyone**\n"
+            "Treat other members, staff, and guests with respect. "
+            "Harassment, threats, or targeted abuse are not allowed.\n\n"
+            "2️⃣ **No Spam**\n"
+            "Do not spam messages, mentions, links, or emojis.\n\n"
+            "3️⃣ **No Advertising**\n"
+            "Do not promote other servers, communities, or services "
+            "without permission from the staff.\n\n"
+            "4️⃣ **No Scamming or Fraud**\n"
+            "Scams, phishing links, impersonation, and fraudulent "
+            "activity are strictly prohibited.\n\n"
+            "5️⃣ **No Exploiting Giveaways or Rewards**\n"
+            "Do not abuse loopholes, manipulate events, or attempt "
+            "to claim rewards through dishonest methods.\n\n"
+            "6️⃣ **No Alternate Accounts**\n"
+            "Using alternate accounts to bypass restrictions, "
+            "participate multiple times, or gain unfair advantages "
+            "is prohibited.\n\n"
+            "7️⃣ **Follow Staff Instructions**\n"
+            "Staff decisions and instructions must be respected. "
+            "If you have an issue, contact staff privately.\n\n"
+            "🚨 **Alt accounts, ban evasion, or attempts to bypass "
+            "our rules may result in an immediate ban.**\n\n"
+            "Keep it fair. Keep it fun. Keep it Wild. 🔥"
+        )
+    },
+
+    # -----------------------------------------
+    # POST 7 - INVITE A FRIEND
+    # -----------------------------------------
+
+    {
+        "title": "🎉 INVITE A FRIEND - GET $100 CAD EACH!",
+        "content": (
+            "Bring a friend into our Discord and help them join "
+            "Gamdom using the affiliate code **BIGBOYBETS**.\n\n"
+            "Once all requirements are verified, **you and your friend "
+            "can each receive up to $100 CAD!** 💰\n\n"
+
+            "**To qualify:**\n"
+            "✅ You must have a Gamdom account under WildLines or "
+            "BIGBOYBETS and be **KYC Level 2**.\n\n"
+
+            "✅ Your friend must join this Discord, sign up to Gamdom "
+            "using **BIGBOYBETS**, and complete **KYC Level 2**.\n\n"
+
+            "✅ Both of you must provide proof of your affiliate code "
+            "and KYC status. Your friend must actively use their "
+            "Gamdom account throughout the month. Signing up alone "
+            "is not enough.\n\n"
+
+            "✅ Both of you must open a support ticket to claim "
+            "the reward.\n\n"
+
+            "**💰 PAYMENT:**\n"
+            "Each eligible person receives **$20 CAD initially**, "
+            "followed by the remaining **$80 CAD at the end of the "
+            "month** once all requirements have been confirmed.\n\n"
+
+            "Invite more than one qualifying friend and you can earn "
+            "the reward for each eligible referral! 🔥\n\n"
+
+            "**🔗 GET YOUR PERSONAL INVITE LINK**\n"
+            "You can get your own permanent Discord invite link here:\n"
+            "<#1555067475312250950>\n\n"
+
+            "All referrals and account activity will be verified. "
+            "Closing and reopening accounts, using alternate accounts, "
+            "or attempting to bypass the requirements may result in "
+            "removal from our Discord.\n\n"
+
+            "Gamdom may also review accounts and take action according "
+            "to its own rules.\n\n"
+
+            "Rewards are subject to WildLines' verification and payment "
+            "discretion. Terms and requirements may change."
+        ),
+        "image": (
+            "https://cdn.discordapp.com/attachments/"
+            "1351468864873041964/"
+            "1555119407087358002/"
+            "794DCDC7-8474-4E8A-9E7B-28D68EC94D5F.png"
+            "?backend=b2&ex=6ac0060f&is=6abeb48f"
+            "&hm=d67e1e01a5468de186d569194f9240b7b891879b47d82de390f41e3e7ac5dbb4"
+        )
+    }
+]
+
+# =========================================
+# SEND AUTO PROMOTION POST
+# =========================================
+
+async def send_auto_promotion_post(post):
+
+    channel = bot.get_channel(
+        INSTAGRAM_DISCORD_CHANNEL_ID
+    )
+
+    if channel is None:
+
+        print(
+            "❌ Auto post channel not found."
+        )
+
+        return False
+
+    try:
+
+        embed = discord.Embed(
+            title=post["title"],
+            description=post["content"],
+            color=discord.Color.green()
+        )
+
+        if post.get("image"):
+
+            embed.set_image(
+                url=post["image"]
+            )
+
+        await channel.send(
+            embed=embed
+        )
+
+        print(
+            f"📢 Auto promotion post sent: "
+            f"{post['title']}"
+        )
+
+        return True
+
+    except Exception as e:
+
+        print(
+            f"❌ Failed to send auto promotion post: {e}"
+        )
+
+        return False
+
+# =========================================
+# AUTO POST ROTATION
+# =========================================
+
+auto_post_order = []
+auto_post_index = 0
+auto_post_first_cycle = True
+
+
+def create_auto_post_order():
+
+    global auto_post_order
+    global auto_post_index
+    global auto_post_first_cycle
+
+    post_count = len(AUTO_POSTS)
+
+    # -----------------------------------------
+    # FIRST CYCLE
+    # POST 7 MUST BE FIRST
+    # -----------------------------------------
+
+    if auto_post_first_cycle:
+
+        remaining_posts = list(
+            range(post_count - 1)
+        )
+
+        random.shuffle(
+            remaining_posts
+        )
+
+        auto_post_order = [
+            post_count - 1
+        ] + remaining_posts
+
+        auto_post_first_cycle = False
+
+    # -----------------------------------------
+    # FUTURE CYCLES
+    # FULLY RANDOM
+    # -----------------------------------------
+
+    else:
+
+        auto_post_order = list(
+            range(post_count)
+        )
+
+        random.shuffle(
+            auto_post_order
+        )
+
+    auto_post_index = 0
+
+    print(
+        "📢 New auto-post order:",
+        [
+            index + 1
+            for index in auto_post_order
+        ]
+    )
+
+# =========================================
+# AUTO POST SCHEDULER
+# =========================================
+
+async def auto_promotion_post_task():
+
+    global auto_post_order
+    global auto_post_index
+
+    print(
+        "📢 Auto promotion post scheduler started"
+    )
+
+    while True:
+
+        # -----------------------------------------
+        # CREATE NEW ORDER IF NEEDED
+        # -----------------------------------------
+
+        if not auto_post_order:
+
+            create_auto_post_order()
+
+        # -----------------------------------------
+        # GET NEXT POST
+        # -----------------------------------------
+
+        post_number = auto_post_order[
+            auto_post_index
+        ]
+
+        post = AUTO_POSTS[
+            post_number
+        ]
+
+        print(
+            f"📢 Sending auto post "
+            f"{post_number + 1} of {len(AUTO_POSTS)}"
+        )
+
+        # -----------------------------------------
+        # SEND POST
+        # -----------------------------------------
+
+        success = await send_auto_promotion_post(
+            post
+        )
+
+        # -----------------------------------------
+        # MOVE TO NEXT POST
+        # -----------------------------------------
+
+        if success:
+
+            auto_post_index += 1
+
+        # -----------------------------------------
+        # ALL POSTS FINISHED
+        # -----------------------------------------
+
+        if auto_post_index >= len(auto_post_order):
+
+            print(
+                "✅ All auto promotion posts "
+                "have been sent."
+            )
+
+            auto_post_order = []
+
+        # -----------------------------------------
+        # WAIT 6 HOURS
+        # -----------------------------------------
+
+        print(
+            "⏰ Next auto promotion post "
+            "in 6 hours."
+        )
+
+        await asyncio.sleep(
+            AUTO_POST_INTERVAL
+        )
+
+
 if __name__ == "__main__":
     bot.run(TOKEN)
