@@ -212,6 +212,7 @@ async def on_ready():
     bot.add_view(TreasureHuntControlView())
     bot.add_view(TreasureHuntSubmissionView())
     bot.add_view(InviteGeneratorView())
+    bot.add_view(GamdomConnectView())
 
     await load_invite_cache()
 
@@ -9555,6 +9556,51 @@ async def create_pending_prize(
     )
 
     # -----------------------------------------
+    # GAMDΟM ACCOUNT
+    # -----------------------------------------
+
+    gamdom_conn = sqlite3.connect(DB_PATH)
+    gamdom_cursor = gamdom_conn.cursor()
+
+    gamdom_cursor.execute("""
+        SELECT gamdom_username, gamdom_id
+        FROM gamdom_accounts
+        WHERE guild_id = ?
+        AND user_id = ?
+    """, (
+        interaction.guild.id,
+        prize_data["winner_id"]
+    ))
+
+    gamdom_account = gamdom_cursor.fetchone()
+
+    gamdom_conn.close()
+
+    if gamdom_account:
+
+        gamdom_username = gamdom_account[0]
+        gamdom_id = gamdom_account[1]
+
+        gamdom_display = (
+            f"**Username:** `{gamdom_username}`\n"
+            f"**Gamdom ID:** `{gamdom_id}`"
+        )
+
+    else:
+
+        gamdom_display = (
+            "⚠️ **NOT CONNECTED**\n"
+            "Winner has not registered their Gamdom Username "
+            "and Gamdom ID."
+        )
+
+    embed.add_field(
+        name="🎰 Gamdom Account",
+        value=gamdom_display,
+        inline=False
+    )
+
+    # -----------------------------------------
     # PRIZE TYPE
     # -----------------------------------------
 
@@ -18715,10 +18761,18 @@ AUTO_POSTS = [
         "title": "🎁 GIVEAWAY & REWARD ELIGIBILITY",
         "content": (
             "Want to be eligible for our weekly giveaways and rewards? 🎁\n\n"
+
             "You must deposit at least **$50 during the week** "
             "to qualify for our giveaway and reward programs.\n\n"
 
-            
+            "🎰 **CONNECT YOUR GAMDΟM ACCOUNT**\n"
+            "You must also have your **Gamdom Username and Gamdom ID "
+            "connected to your Discord account** to receive future "
+            "prizes and rewards.\n\n"
+
+            "If your Gamdom information is not registered, your prize "
+            "may be delayed or **voided** until you meet the requirements.\n\n"
+
             "💰 **PRIZE PAYOUT DAYS**\n"
             "Prizes are sent **ONLY on Tuesdays and Fridays**.\n\n"
 
@@ -18728,11 +18782,12 @@ AUTO_POSTS = [
 
             "⚠️ **IMPORTANT:** Winning a giveaway or event does not "
             "automatically guarantee a payout. If you are found to be "
-            "ineligible or have not met the required conditions, "
-            "your prize may be **voided**.\n\n"
+            "ineligible, have not met the required conditions, or have "
+            "not connected your Gamdom account, your prize may be **voided**.\n\n"
 
-            "Make sure you meet all requirements and remain eligible "
-            "before claiming your reward. 🎁🔥"
+            "Make sure you meet **all requirements**, including the "
+            "$50 weekly deposit requirement and connecting your Gamdom "
+            "Username and Gamdom ID, before claiming your reward. 🎁🔥"
         )
     },
 
@@ -19066,6 +19121,414 @@ async def auto_promotion_post_task():
         await asyncio.sleep(
             AUTO_POST_INTERVAL
         )
+
+# =========================================
+# GAMDΟM ACCOUNT CONNECTION
+# =========================================
+
+class GamdomConnectModal(discord.ui.Modal, title="Connect Your Gamdom Account"):
+
+    gamdom_username = discord.ui.TextInput(
+        label="Gamdom Username",
+        placeholder="Enter your Gamdom username",
+        required=True,
+        max_length=100
+    )
+
+    gamdom_id = discord.ui.TextInput(
+        label="Gamdom ID",
+        placeholder="Enter your Gamdom ID",
+        required=True,
+        max_length=100
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+
+        await interaction.response.send_message(
+            "⏳ Checking your Gamdom account information...",
+            ephemeral=True
+        )
+
+        # We will add the database checking here in the next step.
+
+
+class GamdomConnectView(discord.ui.View):
+
+    def __init__(self):
+
+        super().__init__(
+            timeout=None
+        )
+
+    @discord.ui.button(
+        label="Connect Gamdom Account",
+        style=discord.ButtonStyle.green,
+        emoji="🎰",
+        custom_id="gamdom_connect_account"
+    )
+    async def connect_gamdom(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        await interaction.response.send_modal(
+            GamdomConnectModal()
+        )
+
+class GamdomConnectModal(
+    discord.ui.Modal,
+    title="Connect Your Gamdom Account"
+):
+
+    gamdom_username = discord.ui.TextInput(
+        label="Gamdom Username",
+        placeholder="Enter your Gamdom username",
+        required=True,
+        max_length=100
+    )
+
+    gamdom_id = discord.ui.TextInput(
+        label="Gamdom ID",
+        placeholder="Enter your Gamdom ID",
+        required=True,
+        max_length=100
+    )
+
+    async def on_submit(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        guild = interaction.guild
+        user = interaction.user
+
+        username = self.gamdom_username.value.strip()
+        gamdom_id = self.gamdom_id.value.strip()
+
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        try:
+
+            # -----------------------------------------
+            # CHECK EXISTING ACCOUNT
+            # -----------------------------------------
+
+            cursor.execute("""
+                SELECT
+                    id,
+                    user_id,
+                    gamdom_username,
+                    gamdom_id,
+                    updated_at
+                FROM gamdom_accounts
+                WHERE guild_id = ?
+                AND user_id = ?
+            """, (
+                guild.id,
+                user.id
+            ))
+
+            existing = cursor.fetchone()
+
+            # -----------------------------------------
+            # 24 HOUR COOLDOWN
+            # -----------------------------------------
+
+            if existing:
+
+                updated_at = datetime.fromisoformat(
+                    existing[4]
+                )
+
+                now = discord.utils.utcnow()
+
+                elapsed = now - updated_at
+
+                if elapsed < timedelta(hours=24):
+
+                    remaining = timedelta(hours=24) - elapsed
+
+                    hours = int(
+                        remaining.total_seconds() // 3600
+                    )
+
+                    minutes = int(
+                        (
+                            remaining.total_seconds() % 3600
+                        ) // 60
+                    )
+
+                    await interaction.response.send_message(
+                        "⏳ **You can't change your Gamdom account "
+                        "information yet.**\n\n"
+                        f"You can update it again in approximately "
+                        f"**{hours}h {minutes}m**.\n\n"
+                        "You can only change your Gamdom information "
+                        "once every 24 hours.",
+                        ephemeral=True
+                    )
+
+                    return
+
+            # -----------------------------------------
+            # CHECK DUPLICATE GAMDOM USERNAME
+            # -----------------------------------------
+
+            cursor.execute("""
+                SELECT user_id
+                FROM gamdom_accounts
+                WHERE guild_id = ?
+                AND LOWER(gamdom_username) = LOWER(?)
+                AND user_id != ?
+            """, (
+                guild.id,
+                username,
+                user.id
+            ))
+
+            username_duplicate = cursor.fetchone()
+
+            if username_duplicate:
+
+                duplicate_member = guild.get_member(
+                    username_duplicate[0]
+                )
+
+                if duplicate_member:
+
+                    mention = duplicate_member.mention
+
+                else:
+
+                    mention = f"<@{username_duplicate[0]}>"
+
+                await interaction.response.send_message(
+                    "❌ **Gamdom Username Already Registered**\n\n"
+                    f"The Gamdom username **{username}** is already "
+                    f"registered to {mention}.\n\n"
+                    "If you believe this is incorrect, please contact "
+                    "the staff.",
+                    ephemeral=True
+                )
+
+                return
+
+            # -----------------------------------------
+            # CHECK DUPLICATE GAMDΟM ID
+            # -----------------------------------------
+
+            cursor.execute("""
+                SELECT user_id
+                FROM gamdom_accounts
+                WHERE guild_id = ?
+                AND gamdom_id = ?
+                AND user_id != ?
+            """, (
+                guild.id,
+                gamdom_id,
+                user.id
+            ))
+
+            id_duplicate = cursor.fetchone()
+
+            if id_duplicate:
+
+                duplicate_member = guild.get_member(
+                    id_duplicate[0]
+                )
+
+                if duplicate_member:
+
+                    mention = duplicate_member.mention
+
+                else:
+
+                    mention = f"<@{id_duplicate[0]}>"
+
+                await interaction.response.send_message(
+                    "❌ **Gamdom ID Already Registered**\n\n"
+                    f"The Gamdom ID **{gamdom_id}** is already "
+                    f"registered to {mention}.\n\n"
+                    "If you believe this is incorrect, please contact "
+                    "the staff.",
+                    ephemeral=True
+                )
+
+                return
+
+            # -----------------------------------------
+            # SAVE ACCOUNT
+            # -----------------------------------------
+
+            now = discord.utils.utcnow().isoformat()
+
+            if existing:
+
+                cursor.execute("""
+                    UPDATE gamdom_accounts
+                    SET
+                        gamdom_username = ?,
+                        gamdom_id = ?,
+                        updated_at = ?
+                    WHERE guild_id = ?
+                    AND user_id = ?
+                """, (
+                    username,
+                    gamdom_id,
+                    now,
+                    guild.id,
+                    user.id
+                ))
+
+                message = (
+                    "✅ **Gamdom Account Updated!**\n\n"
+                    f"**Username:** `{username}`\n"
+                    f"**Gamdom ID:** `{gamdom_id}`\n\n"
+                    "Your Gamdom information has been updated "
+                    "successfully.\n\n"
+                    "You can change it again after **24 hours**."
+                )
+
+            else:
+
+                cursor.execute("""
+                    INSERT INTO gamdom_accounts (
+                        guild_id,
+                        user_id,
+                        gamdom_username,
+                        gamdom_id,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (
+                    guild.id,
+                    user.id,
+                    username,
+                    gamdom_id,
+                    now,
+                    now
+                ))
+
+                message = (
+                    "✅ **Gamdom Account Connected!**\n\n"
+                    f"**Username:** `{username}`\n"
+                    f"**Gamdom ID:** `{gamdom_id}`\n\n"
+                    "Your Gamdom information has been saved "
+                    "successfully for future prizes and rewards."
+                )
+
+            conn.commit()
+
+            await interaction.response.send_message(
+                message,
+                ephemeral=True
+            )
+
+        except Exception as e:
+
+            conn.rollback()
+
+            print(
+                f"❌ Gamdom account connection error: {e}"
+            )
+
+            await interaction.response.send_message(
+                "❌ **Something went wrong.**\n\n"
+                "Your Gamdom information could not be saved. "
+                "Please try again later or contact staff.",
+                ephemeral=True
+            )
+
+        finally:
+
+            conn.close()
+
+@bot.tree.command(
+    name="gamdom_connect",
+    description="Post the Gamdom account connection panel."
+)
+async def gamdom_connect(
+    interaction: discord.Interaction
+):
+
+    # -----------------------------------------
+    # OWNER ONLY
+    # -----------------------------------------
+
+    if interaction.user.id != DTRIX_ID:
+
+        await interaction.response.send_message(
+            "❌ You are not authorized to use this command.",
+            ephemeral=True
+        )
+
+        return
+
+    # -----------------------------------------
+    # CREATE EMBED
+    # -----------------------------------------
+
+    embed = discord.Embed(
+        title="🎰 CONNECT YOUR GAMDΟM ACCOUNT",
+        description=(
+            "**Connecting your Gamdom account is REQUIRED "
+            "to receive future prizes and rewards.**\n\n"
+
+            "Please register your **Gamdom Username** and "
+            "**Gamdom ID** using the button below.\n\n"
+
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+
+            "📋 **HOW TO FIND YOUR GAMDΟM ID**\n\n"
+
+            "Your Gamdom ID can be found **right beside your "
+            "Gamdom username** on your Gamdom account.\n\n"
+
+            "Simply click the **Copy** button next to your "
+            "Gamdom Username to copy it, then enter the copied ID "
+            "when connecting your account here.\n\n"
+
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+
+            "🎁 **WHY DO I NEED TO CONNECT?**\n\n"
+
+            "Your Gamdom Username and Gamdom ID are required "
+            "so we can properly identify your account when "
+            "processing future prizes and rewards.\n\n"
+
+            "⚠️ **IMPORTANT**\n\n"
+
+            "You must provide accurate information. If your "
+            "Gamdom information is incorrect or cannot be "
+            "verified, your prize or reward may be delayed "
+            "or voided.\n\n"
+
+            "🔄 You can update your Gamdom information once "
+            "every **24 hours**."
+        ),
+        color=discord.Color.green()
+    )
+
+    embed.set_footer(
+        text="Gamdom account connection is required for future prizes and rewards."
+    )
+
+    # -----------------------------------------
+    # SEND PANEL
+    # -----------------------------------------
+
+    await interaction.channel.send(
+        embed=embed,
+        view=GamdomConnectView()
+    )
+
+    await interaction.response.send_message(
+        "✅ Gamdom connection panel posted successfully.",
+        ephemeral=True
+    )
 
 
 if __name__ == "__main__":
