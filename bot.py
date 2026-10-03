@@ -6223,6 +6223,19 @@ async def gamdom_big_win_listener():
                     "📡 Listening for LIVE Gamdom wins..."
                 )
 
+                channel = bot.get_channel(
+                    GAMDOM_BIG_WIN_CHANNEL_ID
+                )
+
+                if channel is None:
+                    print(
+                        f"❌ Gamdom Discord channel "
+                        f"{GAMDOM_BIG_WIN_CHANNEL_ID} "
+                        f"not found"
+                    )
+                    await asyncio.sleep(5)
+                    continue
+
                 # ========================================================
                 # RECEIVE MESSAGES
                 # ========================================================
@@ -6528,6 +6541,64 @@ async def gamdom_big_win_listener():
                                 "Unknown"
                             )
 
+                            print(
+                                f"🧪 GAMDOM WIN TEST | "
+                                f"username={username!r} | "
+                                f"bet={bet_amount!r} | "
+                                f"payout={payout!r}"
+                            )
+
+                            # -------------------------------------------------
+                            # CHECK GAMDΟM USERNAME AGAINST DATABASE
+                            # -------------------------------------------------
+
+                            gamdom_conn = sqlite3.connect(DB_PATH)
+                            gamdom_cursor = gamdom_conn.cursor()
+
+                            gamdom_cursor.execute("""
+                                SELECT
+                                    user_id,
+                                    gamdom_username,
+                                    gamdom_id
+                                FROM gamdom_accounts
+                                WHERE guild_id = ?
+                                AND LOWER(gamdom_username) = LOWER(?)
+                            """, (
+                                channel.guild.id,
+                                username
+                            ))
+
+                            registered_account = gamdom_cursor.fetchone()
+
+                            gamdom_conn.close()
+
+                            # -------------------------------------------------
+                            # USER IS NOT REGISTERED
+                            # -------------------------------------------------
+
+                            if registered_account is None:
+                                continue
+
+                            # -------------------------------------------------
+                            # REGISTERED DISCORD USER
+                            # -------------------------------------------------
+
+                            discord_user_id = registered_account[0]
+                            registered_username = registered_account[1]
+                            registered_gamdom_id = registered_account[2]
+
+                            discord_member = channel.guild.get_member(
+                                discord_user_id
+                            )
+
+                            if discord_member:
+
+                                discord_mention = discord_member.mention
+
+                            else:
+
+                                discord_mention = f"<@{discord_user_id}>"
+
                             # =================================================
                             # GAME
                             # =================================================
@@ -6548,37 +6619,7 @@ async def gamdom_big_win_listener():
 
 
                             # --------------------------------------------------------
-                            # CONVERT GAMDOM RAW VALUES TO USD
-                            # --------------------------------------------------------
-
-                            try:
-
-                                bet_value = float(
-                                    bet_amount or 0
-                                ) / GAMDOM_UNIT
-
-                            except (
-                                    ValueError,
-                                    TypeError
-                            ):
-
-                                bet_value = 0
-
-                            try:
-
-                                payout_value = float(
-                                    payout or 0
-                                ) / GAMDOM_UNIT
-
-                            except (
-                                    ValueError,
-                                    TypeError
-                            ):
-
-                                payout_value = 0
-
-                            # --------------------------------------------------------
-                            # 500X WIN FILTER
+                            # BIG WIN FILTER
                             # --------------------------------------------------------
 
                             if bet_value <= 0:
@@ -6586,36 +6627,24 @@ async def gamdom_big_win_listener():
 
                             win_multiplier = payout_value / bet_value
 
-                            if profit < 5000 and win_multiplier < 1000:
+                            # Send if:
+                            # 100x or higher
+                            # OR
+                            # $50 or more profit
+
+                            if profit < 50 and win_multiplier < 100:
                                 continue
 
                             print(
                                 f"🔥 BIG WIN DETECTED | "
                                 f"{username} | "
-                                f"{win_multiplier:.2f}x"
+                                f"{win_multiplier:.2f}x | "
+                                f"profit=${profit:,.2f}"
                             )
 
                             game_thumb = bet_data.get(
                                 "gameThumb"
                             )
-
-                            # =================================================
-                            # DISCORD CHANNEL
-                            # =================================================
-
-                            channel = bot.get_channel(
-                                GAMDOM_BIG_WIN_CHANNEL_ID
-                            )
-
-                            if channel is None:
-
-                                print(
-                                    f"❌ Gamdom Discord channel "
-                                    f"{GAMDOM_BIG_WIN_CHANNEL_ID} "
-                                    f"not found"
-                                )
-
-                                continue
 
                             # =================================================
                             # EMBED
@@ -6624,9 +6653,19 @@ async def gamdom_big_win_listener():
                             embed = discord.Embed(
                                 title="🔥 BIG WIN",
                                 description=(
-                                    f"**{username}** just won on Gamdom!"
+                                    f"{discord_mention} "
+                                    f"(**{registered_username}**) just won on Gamdom!"
                                 ),
                                 color=discord.Color.gold()
+                            )
+
+                            embed.add_field(
+                                name="🎰 Gamdom Account",
+                                value=(
+                                    f"**Username:** `{registered_username}`\n"
+                                    f"**Gamdom ID:** `{registered_gamdom_id}`"
+                                ),
+                                inline=False
                             )
 
                             # ------------------------------------------------
@@ -11766,10 +11805,6 @@ async def sync_gamdom_games():
                     ]
                 }
 
-                print(
-                    f"🎰 Requesting Gamdom games page {page}..."
-                )
-
                 async with session.post(
                     GAMDOM_GAMES_URL,
                     json=payload
@@ -11950,11 +11985,6 @@ async def sync_gamdom_games():
                         saved_games += 1
 
                     await db.commit()
-
-                print(
-                    f"✅ Page {page}: "
-                    f"{len(games_list)} games processed."
-                )
 
                 # -----------------------------------------
                 # CHECK IF FINISHED
