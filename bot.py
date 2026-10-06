@@ -9165,15 +9165,6 @@ async def stream_prizes(
     )
 
     embed.add_field(
-        name="🎰 Free Spins",
-        value=(
-            "Record free spins including the slot, "
-            "quantity and bet size."
-        ),
-        inline=False
-    )
-
-    embed.add_field(
         name="🎟️ Raffle",
         value="Record a raffle prize.",
         inline=False
