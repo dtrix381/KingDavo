@@ -6541,13 +6541,6 @@ async def gamdom_big_win_listener():
                                 "Unknown"
                             )
 
-                            print(
-                                f"🧪 GAMDOM WIN TEST | "
-                                f"username={username!r} | "
-                                f"bet={bet_amount!r} | "
-                                f"payout={payout!r}"
-                            )
-
                             # -------------------------------------------------
                             # CHECK GAMDΟM USERNAME AGAINST DATABASE
                             # -------------------------------------------------
@@ -18952,6 +18945,47 @@ AUTO_POSTS = [
             "794DCDC7-8474-4E8A-9E7B-28D68EC94D5F.png"
             "?backend=b2&ex=6ac0060f&is=6abeb48f"
             "&hm=d67e1e01a5468de186d569194f9240b7b891879b47d82de390f41e3e7ac5dbb4"
+        )
+    },
+
+    # -----------------------------------------
+    # POST 8 - GAMDOM VIP
+    # -----------------------------------------
+
+    {
+        "title": "💎 GAMDOM VIP",
+        "content": (
+            "**VIP REQUIREMENTS**\n\n"
+
+            "• **$100,000 USD wager** and **$10,000 USD deposit** "
+            "within 30 days.\n"
+            "• No more than **25% of your wager** can be on Originals.\n"
+            "• These requirements must be met to achieve and retain VIP status.\n"
+            "• You are not eligible for **Perks 1, 2 or 3** until the "
+            "VIP requirements are met and formal VIP status is attained.\n\n"
+
+            "**PERKS**\n\n"
+
+            "• **Milestone claims OR 10% loss back** on overall losses only "
+            "(end-of-month option - choice is yours).\n"
+            "• **Monthly VIP Syndicate** funded by WildLines, with the "
+            "ending balance equally distributed among VIPs.\n"
+            "• Once qualified, **all stream prizes won are awarded as 2x "
+            "the amount**.\n"
+            "• **Priority Support** in Discord.\n"
+            "• **Priority Slot Calls** in Stream.\n"
+            "• **VIP Referral Program**.\n"
+            "• **$50 CAD Birthday Bonus** from WildLines.\n\n"
+
+            "💰 **All prizes are paid in CAD.**"
+        ),
+        "image": (
+            "https://cdn.discordapp.com/attachments/"
+            "1556543994715050044/"
+            "1556583026157428756/"
+            "file_0000000038788210af0d5f3e8b0ec731.png"
+            "?backend=b2&ex=6ac4b069&is=6ac35ee9"
+            "&hm=e7c055b0d1109be6ed12a24c027fd57a73df37a71512e2e7fa0805abe2977464"
         )
     }
 ]
