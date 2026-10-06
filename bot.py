@@ -6849,25 +6849,6 @@ class StreamPrizeView(discord.ui.View):
         )
 
     @discord.ui.button(
-        label="Free Spins",
-        emoji="🎰",
-        style=discord.ButtonStyle.primary,
-        custom_id="stream_prize_free_spins"
-    )
-    async def free_spins(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button
-    ):
-
-        await interaction.response.send_message(
-            "🎰 **Free Spins**\n\nSelect the winner below.",
-            view=PrizeMemberSelectView("Free Spins"),
-            ephemeral=True
-        )
-
-    
-    @discord.ui.button(
         label="Raffle",
         emoji="🎟️",
         style=discord.ButtonStyle.primary,
@@ -7036,21 +7017,21 @@ class WheelChoiceView(discord.ui.View):
         )
 
     @discord.ui.button(
-        label="Free Spins",
-        emoji="🎰",
+        label="Wild Points",
+        emoji="💎",
         style=discord.ButtonStyle.primary,
-        custom_id="wheel_free_spins"
+        custom_id="wheel_wild_points"
     )
-    async def free_spins(
+    async def wild_points(
         self,
         interaction: discord.Interaction,
         button: discord.ui.Button
     ):
 
         await interaction.response.send_message(
-            "🎰 **Wheel — Free Spins**\n\n"
+            "💎 **Wheel — Wild Points**\n\n"
             "Select the winner below.",
-            view=PrizeMemberSelectView("Wheel - Free Spins"),
+            view=PrizeMemberSelectView("Wheel - Wild Points"),
             ephemeral=True
         )
         
@@ -7364,9 +7345,15 @@ class PrizeMemberSelectView(discord.ui.View):
         # Wild Points are not currency, so skip
         # the USD/CAD selection.
 
-        if self.prize_type == "Plinko Wild Points":
+        if self.prize_type in (
+                "Plinko Wild Points",
+                "Wheel - Wild Points"
+        ):
             await interaction.response.send_modal(
-                PlinkoWildPointsModal(member.id)
+                PlinkoWildPointsModal(
+                    member.id,
+                    self.prize_type
+                )
             )
 
             return
@@ -7422,24 +7409,6 @@ class PlinkoChoiceView(discord.ui.View):
         await interaction.response.edit_message(
             content="💎 **Plinko Wild Points**\n\nSelect the winner below.",
             view=PrizeMemberSelectView("Plinko Wild Points")
-        )
-
-    @discord.ui.button(
-        label="Free Spins",
-        emoji="🎰",
-        style=discord.ButtonStyle.primary,
-        custom_id="plinko_free_spins"
-    )
-    async def free_spins(
-            self,
-            interaction: discord.Interaction,
-            button: discord.ui.Button
-    ):
-        await interaction.response.send_message(
-            "🎰 **Plinko - Free Spins**\n\n"
-            "Select the winner below.",
-            view=PrizeMemberSelectView("Plinko - Free Spins"),
-            ephemeral=True
         )
 
 # =========================================
@@ -8834,7 +8803,7 @@ class PlinkoPrizeModal(
 
 class PlinkoWildPointsModal(
     discord.ui.Modal,
-    title="🎯 Plinko Wild Points"
+    title="💎 Wild Points"
 ):
 
     wild_points = discord.ui.TextInput(
@@ -8845,12 +8814,14 @@ class PlinkoWildPointsModal(
     )
 
     def __init__(
-        self,
-        winner_id: int
+            self,
+            winner_id: int,
+            prize_type: str
     ):
         super().__init__()
 
         self.winner_id = winner_id
+        self.prize_type = prize_type
 
     async def on_submit(
         self,
@@ -8905,7 +8876,7 @@ class PlinkoWildPointsModal(
             "winner_name": member.display_name,
             "winner_mention": member.mention,
 
-            "prize_type": "Plinko",
+            "prize_type": self.prize_type,
 
             "slot_name": None,
             "quantity": None,
@@ -9131,19 +9102,21 @@ class PrizeConfirmationView(discord.ui.View):
             )
 
         # -----------------------------------------
-        # PLINKO WILD POINTS
+        # WILD POINTS
         # -----------------------------------------
 
         elif prize_type in (
-            "Plinko Wild Points",
-            "Plinko"
+                "Plinko Wild Points",
+                "Wheel - Wild Points",
+                "Plinko"
         ) and self.prize_data.get(
             "wild_points"
         ) is not None:
 
             await interaction.response.send_modal(
                 PlinkoWildPointsModal(
-                    winner_id
+                    winner_id,
+                    prize_type
                 )
             )
 
