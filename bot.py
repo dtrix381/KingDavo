@@ -27,7 +27,7 @@ PROVIDER_IMAGES = {
     "pragmatic": "https://cdn.discordapp.com/attachments/1283197229913608192/1362821484447399936/CvuaWH6WBTwAAAAASUVORK5CYII.png?ex=6a2cd729&is=6a2b85a9&hm=e8ef3da0bde4fbd77e5d2aa99ada5fdd66b0ac392035b4c79ddcefb5acef18f5",
     "hacksaw": "https://cdn.discordapp.com/attachments/1225024450345439313/1514975662211858462/image.png?ex=6a2d5288&is=6a2c0108&hm=2603e233798b21904a31ac3f48b98488b95b649f09c3ba55b5628f400b5b67a6",
     "nolimit_city": "https://cdn.discordapp.com/attachments/1353382950300811394/1374936691063918632/aJJvcpI1AAAAAElFTkSuQmCC.png?ex=686c8214&is=686b3094&hm=17d990f5013d8f961ebf03e898085a39b399822673481721a3482f1ab0287285&",
-    "jedi_of_slots": "https://cdn.discordapp.com/attachments/1225024450345439313/1534176199297990676/beb73497-6ef9-4fa0-a0bb-b0313eb61533-fullsize.png?ex=6a732c6d&is=6a71daed&hm=ee292462c20f5f9c8295069deae66b89888c109d5a7ff9e83e3c1e0c28425c42"
+    "jedi_of_slots": "https://cdn.discordapp.com/attachments/1176520510515970054/1557269419124727880/57B8EAAD-26AC-4EE8-9B8A-27A4433C4CF7.png?backend=b2&ex=6ac72faa&is=6ac5de2a&hm=0b5d26d82cd86d269d5baeb4e394101dcf77969b96e97915bd62135519aea1db"
 }
 
 # ===================== CONFIG =====================
