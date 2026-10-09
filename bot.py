@@ -18926,66 +18926,6 @@ AUTO_POSTS = [
             "?backend=b2&ex=6ac4b069&is=6ac35ee9"
             "&hm=e7c055b0d1109be6ed12a24c027fd57a73df37a71512e2e7fa0805abe2977464"
         )
-    },
-
-    # -----------------------------------------
-    # POST 8 - INVITE A FRIEND
-    # -----------------------------------------
-
-    {
-        "title": "🎉 INVITE A FRIEND - GET $100 CAD EACH!",
-        "content": (
-            "Bring a friend into our Discord and help them join "
-            "Gamdom using the affiliate code **BIGBOYBETS**.\n\n"
-            "Once all requirements are verified, **you and your friend "
-            "can each receive up to $100 CAD!** 💰\n\n"
-
-            "**To qualify:**\n"
-            "✅ You must have a Gamdom account under WildLines or "
-            "BIGBOYBETS and be **KYC Level 2**.\n\n"
-
-            "✅ Your friend must join this Discord, sign up to Gamdom "
-            "using **BIGBOYBETS**, and complete **KYC Level 2**.\n\n"
-
-            "✅ Both of you must provide proof of your affiliate code "
-            "and KYC status. Your friend must actively use their "
-            "Gamdom account throughout the month. Signing up alone "
-            "is not enough.\n\n"
-
-            "✅ Both of you must open a support ticket to claim "
-            "the reward.\n\n"
-
-            "**💰 PAYMENT:**\n"
-            "Each eligible person receives **$20 CAD initially**, "
-            "followed by the remaining **$80 CAD at the end of the "
-            "month** once all requirements have been confirmed.\n\n"
-
-            "Invite more than one qualifying friend and you can earn "
-            "the reward for each eligible referral! 🔥\n\n"
-
-            "**🔗 GET YOUR PERSONAL INVITE LINK**\n"
-            "You can get your own permanent Discord invite link here:\n"
-            "<#1282174698163015804>\n\n"
-
-            "All referrals and account activity will be verified. "
-            "Closing and reopening accounts, using alternate accounts, "
-            "or attempting to bypass the requirements may result in "
-            "removal from our Discord.\n\n"
-
-            "Gamdom may also review accounts and take action according "
-            "to its own rules.\n\n"
-
-            "Rewards are subject to WildLines' verification and payment "
-            "discretion. Terms and requirements may change."
-        ),
-        "image": (
-            "https://cdn.discordapp.com/attachments/"
-            "1351468864873041964/"
-            "1555119407087358002/"
-            "794DCDC7-8474-4E8A-9E7B-28D68EC94D5F.png"
-            "?backend=b2&ex=6ac0060f&is=6abeb48f"
-            "&hm=d67e1e01a5468de186d569194f9240b7b891879b47d82de390f41e3e7ac5dbb4"
-        )
     }
 ]
 
@@ -19063,18 +19003,13 @@ def create_auto_post_order():
     # -----------------------------------------
 
     if auto_post_first_cycle:
-
-        remaining_posts = list(
-            range(post_count - 1)
+        auto_post_order = list(
+            range(post_count)
         )
 
         random.shuffle(
-            remaining_posts
+            auto_post_order
         )
-
-        auto_post_order = [
-            post_count - 1
-        ] + remaining_posts
 
         auto_post_first_cycle = False
 
