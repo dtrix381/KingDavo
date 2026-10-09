@@ -22,6 +22,8 @@ from supabase import create_client
 import io
 from PIL import Image, ImageDraw
 from urllib.parse import quote
+import subprocess
+from pathlib import Path
 
 PROVIDER_IMAGES = {
     "pragmatic": "https://cdn.discordapp.com/attachments/1283197229913608192/1362821484447399936/CvuaWH6WBTwAAAAASUVORK5CYII.png?ex=6a2cd729&is=6a2b85a9&hm=e8ef3da0bde4fbd77e5d2aa99ada5fdd66b0ac392035b4c79ddcefb5acef18f5",
@@ -183,6 +185,24 @@ GAMDOM_UNIT = 1500
 GAMDOM_GAMES_URL = "https://gamdom.com/client-api/casino/games-list"
 GAMDOM_GAMES_PER_PAGE = 100
 
+CLIP_CHANNEL_ID = 1176520511879122989
+
+CLIP_BEFORE_SECONDS = 45
+CLIP_AFTER_SECONDS = 10
+
+STREAMER_MAP = {
+    "wildlinesoceania": {
+        "display_name": "Jackpot Jess"
+    },
+    "wildlines": {
+        "display_name": "Drew"
+    }
+}
+
+CLIP_BUFFER_FOLDER = "kick_buffer"
+CLIP_SEGMENT_SECONDS = 10
+CLIP_BUFFER_SECONDS = 120
+pending_clip_tasks = set()
 
 @bot.event
 async def on_ready():
@@ -268,6 +288,21 @@ async def on_ready():
         )
 
         print("🎰 Gamdom Big Win listener started")
+
+
+    # -----------------------------------------
+    # KICK ROLLING BUFFER RECORDER
+    # -----------------------------------------
+
+    if (
+        not hasattr(bot, "kick_recorder_task_handle")
+        or bot.kick_recorder_task_handle.done()
+    ):
+        bot.kick_recorder_task_handle = asyncio.create_task(
+            kick_recorder_task()
+        )
+
+        print("🎥 Kick rolling-buffer recorder task started")
 
     # -----------------------------------------
     # SERVER TAG DATABASE
@@ -3171,7 +3206,7 @@ sys.stdout.reconfigure(line_buffering=True)
 LIVE_CHANNEL_ID = 1534125948989866166
 LIVE_ROLE_ID = 1176520509878439997
 KICK_USERNAME = "wildlines"
-
+KICK_URL = f"https://kick.com/{KICK_USERNAME}"
 KICK_API_URL = f"https://kick.com/api/v1/channels/{KICK_USERNAME}"
 PROXY_URL = f"https://aaronjay.dtrix381.workers.dev?u={KICK_API_URL}"
 
@@ -19557,6 +19592,318 @@ async def gamdom_connect(
         "✅ Gamdom connection panel posted successfully.",
         ephemeral=True
     )
+
+# ============================================================
+# KICK ROLLING BUFFER RECORDER
+# ============================================================
+
+KICK_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/130.0.0.0 Safari/537.36"
+)
+
+
+def get_kick_stream_url():
+    """Retrieve the current direct URL for the Kick live stream."""
+    command = [
+        sys.executable,
+        "-m",
+        "yt_dlp",
+        "--no-warnings",
+        "-f",
+        "best",
+        "-g",
+        KICK_URL,
+    ]
+
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=45,
+        )
+    except (subprocess.TimeoutExpired, OSError) as error:
+        print(f"❌ Could not retrieve Kick stream URL: {error}")
+        return None
+
+    if result.returncode != 0:
+        print("❌ yt-dlp could not retrieve the Kick stream.")
+        print(result.stderr[-1500:])
+        return None
+
+    urls = [
+        line.strip()
+        for line in result.stdout.splitlines()
+        if line.strip().startswith(("https://", "http://"))
+    ]
+
+    if not urls:
+        print("❌ No usable Kick stream URL returned.")
+        return None
+
+    return urls[-1]
+
+
+def cleanup_kick_segments():
+    """Remove expired segments while keeping recent buffer footage."""
+    folder = Path(CLIP_BUFFER_FOLDER)
+    segments = sorted(
+        folder.glob("segment_*.ts"),
+        key=lambda path: path.stat().st_mtime,
+    )
+
+    cutoff = time.time() - (
+        CLIP_BUFFER_SECONDS + CLIP_SEGMENT_SECONDS * 2
+    )
+
+    # Keep at least the newest two segments.
+    for segment in segments[:-2]:
+        try:
+            if segment.stat().st_mtime < cutoff:
+                segment.unlink()
+                print(f"🧹 Removed expired segment: {segment.name}")
+        except OSError as error:
+            print(f"⚠️ Could not remove {segment.name}: {error}")
+
+
+# ============================================================
+# CREATE BIG WIN CLIP
+# ============================================================
+
+async def create_big_win_clip(username, display_name, win_time):
+    folder = Path(CLIP_BUFFER_FOLDER)
+    output_folder = folder / "clips"
+    output_folder.mkdir(parents=True, exist_ok=True)
+
+    # Give the recorder time to capture footage after the win.
+    await asyncio.sleep(CLIP_AFTER_SECONDS)
+
+    # Keep the current segment list in memory while preparing the clip.
+    segments = sorted(
+        folder.glob("segment_*.ts"),
+        key=lambda path: path.stat().st_mtime,
+    )
+
+    if not segments:
+        print("❌ No Kick segments available for clipping.")
+        return
+
+    print(
+        f"🎬 Preparing clip for {display_name} "
+        f"(Gamdom user: {username})"
+    )
+
+    # Use FFmpeg's concat demuxer to join the available segments.
+    concat_file = output_folder / "concat_list.txt"
+    combined_file = output_folder / "combined_buffer.ts"
+
+    try:
+        with concat_file.open("w", encoding="utf-8") as file:
+            for segment in segments:
+                # FFmpeg concat paths use single quotes.
+                safe_path = str(segment.resolve()).replace("'", r"'\''")
+                file.write(f"file '{safe_path}'\n")
+
+        concat_command = [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel", "error",
+            "-f", "concat",
+            "-safe", "0",
+            "-i", str(concat_file),
+            "-c", "copy",
+            str(combined_file),
+        ]
+
+        concat_result = await asyncio.to_thread(
+            subprocess.run,
+            concat_command,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+
+        if concat_result.returncode != 0:
+            print("❌ Failed to combine Kick segments:")
+            print(concat_result.stderr[-2000:])
+            return
+
+        # This first test creates a 55-second playable clip.
+        # Timeline alignment will be calibrated in the next step.
+        timestamp = win_time.strftime("%Y%m%d_%H%M%S")
+        output_file = output_folder / f"big_win_{timestamp}.mp4"
+
+        clip_command = [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel", "error",
+            "-sseof", "-55",
+            "-i", str(combined_file),
+            "-t", "55",
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-movflags", "+faststart",
+            str(output_file),
+        ]
+
+        clip_result = await asyncio.to_thread(
+            subprocess.run,
+            clip_command,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+
+        if clip_result.returncode != 0:
+            print("❌ Failed to create MP4 clip:")
+            print(clip_result.stderr[-2000:])
+            return
+
+        print(f"✅ Test clip created: {output_file}")
+
+
+        # ==========================================
+        # UPLOAD BIG WIN CLIP TO DISCORD
+        # ==========================================
+
+        try:
+            clip_channel = bot.get_channel(CLIP_CHANNEL_ID)
+
+            # Fetch the channel if it isn't cached.
+            if clip_channel is None:
+                clip_channel = await bot.fetch_channel(
+                    CLIP_CHANNEL_ID
+                )
+
+            upload_message = (
+                f"🔥 **BIG WIN CLIP — {display_name}**\n"
+                f"🎰 Gamdom username: `{username}`\n"
+                f"🕒 Win time: <t:{int(win_time.timestamp())}:F>"
+            )
+
+            await clip_channel.send(
+                content=upload_message,
+                file=discord.File(
+                    str(output_file),
+                    filename=output_file.name
+                )
+            )
+
+            print(
+                f"✅ BIG WIN CLIP UPLOADED | "
+                f"{display_name} | {output_file.name}"
+            )
+
+        except Exception as upload_error:
+            print(
+                f"❌ Failed to upload Big Win clip: "
+                f"{upload_error}"
+            )
+
+    except Exception as error:
+        print(f"❌ Big Win clip error: {error}")
+
+async def kick_recorder_task():
+    """Continuously record the Kick stream into a rolling buffer."""
+    folder = Path(CLIP_BUFFER_FOLDER)
+    folder.mkdir(parents=True, exist_ok=True)
+
+    while True:
+        process = None
+
+        try:
+            print(f"🎥 Looking for live Kick stream: {KICK_URL}")
+
+            # yt-dlp can block while retrieving the direct stream URL.
+            stream_url = await asyncio.to_thread(get_kick_stream_url)
+
+            if not stream_url:
+                print("⏳ Kick stream unavailable. Retrying in 15 seconds.")
+                await asyncio.sleep(15)
+                continue
+
+            output_pattern = str(
+                folder / "segment_%Y%m%d_%H%M%S.ts"
+            )
+
+            command = [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "warning",
+                "-user_agent",
+                KICK_USER_AGENT,
+                "-referer",
+                "https://kick.com/",
+                "-i",
+                stream_url,
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a:0?",
+                "-c",
+                "copy",
+                "-f",
+                "segment",
+                "-segment_time",
+                str(CLIP_SEGMENT_SECONDS),
+                "-reset_timestamps",
+                "1",
+                "-segment_format",
+                "mpegts",
+                "-strftime",
+                "1",
+                output_pattern,
+            ]
+
+            print("🔴 Starting Kick rolling-buffer recording...")
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+
+            while process.poll() is None:
+                cleanup_kick_segments()
+                await asyncio.sleep(5)
+
+            stderr_output = ""
+            if process.stderr:
+                stderr_output = process.stderr.read()
+
+            print("⚠️ Kick recorder stopped.")
+            if stderr_output:
+                print(stderr_output[-1500:])
+
+        except asyncio.CancelledError:
+            print("🛑 Kick recorder task cancelled.")
+            raise
+
+        except Exception as error:
+            print(f"❌ Kick recorder error: {error}")
+
+        finally:
+            if process is not None and process.poll() is None:
+                process.terminate()
+
+                try:
+                    await asyncio.to_thread(process.wait, timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    await asyncio.to_thread(process.wait)
+
+            if process is not None and process.stderr:
+                process.stderr.close()
+
+        print("🔄 Restarting Kick recorder in 10 seconds...")
+        await asyncio.sleep(10)
 
 
 if __name__ == "__main__":
