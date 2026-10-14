@@ -264,6 +264,10 @@ async def on_ready():
         check_stream.start()
         print("▶️ Kick stream checker started")
 
+    if not getattr(bot, "_verification_sync_started", False):
+        bot._verification_sync_started = True
+        asyncio.create_task(verification_session_sync_loop())
+
     # -----------------------------------------
     # DISCORD AUTO PROMOTION POSTS
     # -----------------------------------------
