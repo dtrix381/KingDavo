@@ -89,6 +89,18 @@ JOIN_EMOJI = "🎰"
 manual_games = {}  # Stores {channel_id: (players, provider_name)}
 invite_cache = {}
 
+WILDLINES_ROLE_ID = 1176520509878439997
+VERIFICATION_LOG_CHANNEL_ID = 1534120644252536852
+VERIFY_SITE_URL = "https://teamfullsend.com/verify"
+VERIFICATION_API_URL = (
+    "https://wildlines-verification-test.onrender.com"
+)
+VERIFICATION_TICKET_CATEGORY_ID = 1555041120462045295
+VERIFICATION_REVIEWER_IDS = {
+    488015447417946151,  # dtrix
+    850665803161534484,  # ham
+    878253813553844254,  # tee
+}
 INSTAGRAM_USERNAME = "wildlinesofficial"
 INSTAGRAM_PROFILE_URL = (
     f"https://www.instagram.com/{INSTAGRAM_USERNAME}/"
@@ -233,6 +245,9 @@ async def on_ready():
     bot.add_view(TreasureHuntSubmissionView())
     bot.add_view(InviteGeneratorView())
     bot.add_view(GamdomConnectView())
+    bot.add_view(VerificationView())
+    bot.add_view(VerificationTicketReasonView())
+    bot.add_view(VerificationTicketDecisionView())
 
     await load_invite_cache()
 
@@ -19838,6 +19853,2263 @@ async def kick_recorder_task():
                 process.stderr.close()
 
         print("🔄 Restarting Kick recorder in 10 seconds...")
+        await asyncio.sleep(10)
+
+class VerificationLinkView(discord.ui.View):
+    def __init__(self, verification_url):
+        super().__init__(timeout=900)
+        self.add_item(
+            discord.ui.Button(
+                label="Open Verification Website",
+                style=discord.ButtonStyle.link,
+                url=verification_url,
+            )
+        )
+
+
+class ChangeKickAccountView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=900)
+
+    @discord.ui.button(
+        label="Change Kick Account",
+        style=discord.ButtonStyle.primary,
+        emoji="🔄",
+        custom_id="wildlines:verification:change_kick",
+    )
+    async def change_kick_account(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            # Confirm the member still has the verified role.
+            if interaction.guild is None:
+                await interaction.followup.send(
+                    "Please use this button inside the Wildlines server.",
+                    ephemeral=True,
+                )
+                return
+
+            role = interaction.guild.get_role(WILDLINES_ROLE_ID)
+
+            if role is None or role not in interaction.user.roles:
+                await interaction.followup.send(
+                    "Your verified status could not be confirmed. "
+                    "Please use the Verify Account panel.",
+                    ephemeral=True,
+                )
+                return
+
+            account = get_verified_account(interaction.user.id)
+
+            if not account:
+                await interaction.followup.send(
+                    "I couldn't find your active verification record. "
+                    "Please contact a server administrator before "
+                    "changing your Kick account.",
+                    ephemeral=True,
+                )
+                return
+
+            data = await create_verification_session(
+                interaction.user.id,
+                mode="change",
+            )
+
+            if data is None:
+                await interaction.followup.send(
+                    "I couldn't start your account-change session. "
+                    "Please try again later.",
+                    ephemeral=True,
+                )
+                return
+
+            await interaction.followup.send(
+                "Your Kick account-change session is ready. "
+                "Connect the Kick account you want to use. "
+                "Your existing account will remain recorded until "
+                "the new account has been validated and accepted.",
+                view=VerificationLinkView(data["verification_url"]),
+                ephemeral=True,
+            )
+
+        except (
+            aiohttp.ClientError,
+            asyncio.TimeoutError,
+            ValueError,
+            KeyError,
+            sqlite3.Error,
+            discord.HTTPException,
+        ) as error:
+            print(
+                "[Verification] Kick account-change session error:",
+                error,
+            )
+
+            await interaction.followup.send(
+                "The account-change service is temporarily unavailable. "
+                "Please try again later.",
+                ephemeral=True,
+            )
+
+
+class VerificationView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Verify Account",
+        style=discord.ButtonStyle.green,
+        emoji="✅",
+        custom_id="wildlines_verification_account",
+    )
+    async def verify_account(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            if interaction.guild is None:
+                await interaction.followup.send(
+                    "Please use this button inside the Wildlines server.",
+                    ephemeral=True,
+                )
+                return
+
+            role = interaction.guild.get_role(WILDLINES_ROLE_ID)
+
+            if role is None:
+                await interaction.followup.send(
+                    "The verification role is not configured correctly. "
+                    "Please contact a server administrator.",
+                    ephemeral=True,
+                )
+                return
+
+            # Already has the Wildlines role: show their linked Kick account.
+            if role in interaction.user.roles:
+                account = get_verified_account(interaction.user.id)
+
+                if account is None:
+                    await interaction.followup.send(
+                        "You have the verified role, but I couldn't find "
+                        "your active verification record. Please contact "
+                        "a server administrator.",
+                        ephemeral=True,
+                    )
+                    return
+
+                kick_username = account.get("kick_username")
+                kick_user_id = account.get("kick_user_id")
+
+                embed = discord.Embed(
+                    title="✅ Already Verified",
+                    description=(
+                        "Your Wildlines account is already verified."
+                    ),
+                    color=discord.Color.green(),
+                )
+
+                if kick_username:
+                    embed.add_field(
+                        name="Linked Kick Account",
+                        value=f"[{kick_username}]"
+                              f"(https://kick.com/{kick_username})",
+                        inline=False,
+                    )
+                else:
+                    embed.add_field(
+                        name="Linked Kick Account",
+                        value="Kick username unavailable in the database.",
+                        inline=False,
+                    )
+
+                if kick_user_id:
+                    embed.add_field(
+                        name="Kick User ID",
+                        value=f"`{kick_user_id}`",
+                        inline=False,
+                    )
+
+                await interaction.followup.send(
+                    embed=embed,
+                    view=ChangeKickAccountView(),
+                    ephemeral=True,
+                )
+                return
+
+            # Not verified: use the normal verification flow.
+            data = await create_verification_session(
+                interaction.user.id
+            )
+
+            if data is None:
+                await interaction.followup.send(
+                    "❌ I couldn't start verification. "
+                    "Please try again later.",
+                    ephemeral=True,
+                )
+                return
+
+            await interaction.followup.send(
+                "✅ Your verification session is ready!",
+                view=VerificationLinkView(data["verification_url"]),
+                ephemeral=True,
+            )
+
+        except (
+            aiohttp.ClientError,
+            asyncio.TimeoutError,
+            ValueError,
+            KeyError,
+            sqlite3.Error,
+            discord.HTTPException,
+        ) as error:
+            print(
+                "[Verification] Verify Account button error:",
+                error,
+            )
+
+            await interaction.followup.send(
+                "❌ The verification service is temporarily unavailable. "
+                "Please try again later.",
+                ephemeral=True,
+            )
+
+
+@bot.tree.command(
+    name="verification",
+    description="Post the server verification panel"
+)
+async def verification(interaction: discord.Interaction):
+
+    # Only the bot owner can post the panel
+    if interaction.user.id != DTRIX_ID:
+        await interaction.response.send_message(
+            "❌ You cannot use this command.",
+            ephemeral=True
+        )
+        return
+
+    embed = discord.Embed(
+        title="Wildlines Account Verification",
+        description=(
+            "Welcome! Click the button below to begin "
+            "your account verification.\n\n"
+            "✅ Connect your Discord account\n"
+            "🎮 Connect your Kick account\n"
+            "🔎 Complete the required security checks\n\n"
+            "Please make sure you are not using a VPN or proxy "
+            "during verification."
+        ),
+        color=discord.Color.green()
+    )
+
+    embed.set_footer(
+        text="Wildlines Verification System"
+    )
+
+    # Acknowledge the command privately
+    await interaction.response.send_message(
+        "✅ Verification panel posted.",
+        ephemeral=True
+    )
+
+    # Post the public panel in the channel where the command was used
+    if interaction.channel is not None:
+        await interaction.channel.send(
+            embed=embed,
+            view=VerificationView()
+        )
+
+
+async def send_verification_log(
+    title: str,
+    details: list[str],
+    success: bool = False
+):
+    channel = bot.get_channel(VERIFICATION_LOG_CHANNEL_ID)
+
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(
+                VERIFICATION_LOG_CHANNEL_ID
+            )
+        except discord.HTTPException:
+            print("Could not access the verification log channel.")
+            return
+
+    color = discord.Color.green() if success else discord.Color.red()
+
+    embed = discord.Embed(
+        title=title,
+        description="\n".join(details),
+        color=color,
+        timestamp=discord.utils.utcnow()
+    )
+
+    try:
+        await channel.send(embed=embed)
+    except discord.HTTPException as error:
+        print(f"Could not send verification log: {error}")
+
+
+async def fetch_verification_result(session, session_id):
+    url = (
+        f"{VERIFICATION_API_URL}/api/verification/"
+        f"session/{session_id}/result"
+    )
+
+    headers = {
+        "X-Bot-Secret": os.environ.get("BOT_API_SECRET", "")
+    }
+
+    if not headers["X-Bot-Secret"]:
+        print("Verification error: BOT_API_SECRET is missing.")
+        return None
+
+    try:
+        async with session.get(
+            url,
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as response:
+            if response.status != 200:
+                return None
+
+            data = await response.json()
+
+            if data.get("ready") is not True:
+                return None
+
+            return data
+
+    except (
+        aiohttp.ClientError,
+        asyncio.TimeoutError,
+        ValueError,
+    ):
+        return None
+
+
+async def submit_verification_decision(session, session_id, status):
+    allowed_statuses = {
+        "verified",
+        "duplicate_kick",
+        "review_required",
+        "rejected",
+    }
+
+    if status not in allowed_statuses:
+        print("Verification error: invalid decision status.")
+        return False
+
+    url = (
+        f"{VERIFICATION_API_URL}/api/verification/"
+        f"session/{session_id}/decision"
+    )
+
+    headers = {
+        "X-Bot-Secret": os.environ.get("BOT_API_SECRET", "")
+    }
+
+    if not headers["X-Bot-Secret"]:
+        print("Verification error: BOT_API_SECRET is missing.")
+        return False
+
+    try:
+        async with session.post(
+            url,
+            json={"status": status},
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as response:
+            if response.status != 200:
+                print(
+                    "Verification decision submission failed:",
+                    response.status,
+                )
+                return False
+
+            data = await response.json()
+            return data.get("success") is True
+
+    except (
+        aiohttp.ClientError,
+        asyncio.TimeoutError,
+        ValueError,
+    ):
+        return False
+
+
+
+async def submit_manual_review_decision(session, session_id, status):
+    """Submit an authorized manual-review decision to the backend."""
+
+    if status not in {"verified", "rejected"}:
+        print("Verification error: invalid manual-review decision.")
+        return False
+
+    url = (
+        f"{VERIFICATION_API_URL}/api/verification/"
+        f"session/{session_id}/review-decision"
+    )
+
+    headers = {
+        "X-Bot-Secret": os.environ.get("BOT_API_SECRET", "")
+    }
+
+    if not headers["X-Bot-Secret"]:
+        print("Verification error: BOT_API_SECRET is missing.")
+        return False
+
+    try:
+        async with session.post(
+            url,
+            json={"status": status},
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as response:
+            if response.status != 200:
+                print(
+                    "Manual-review decision submission failed:",
+                    response.status,
+                )
+                return False
+
+            data = await response.json()
+            return data.get("success") is True
+
+    except (
+        aiohttp.ClientError,
+        asyncio.TimeoutError,
+        ValueError,
+    ) as error:
+        print("Manual-review API request failed:", error)
+        return False
+
+
+def find_kick_account_owner(kick_user_id, discord_id):
+    if not kick_user_id:
+        raise ValueError("Kick user ID is missing.")
+
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            """
+            SELECT discord_id
+            FROM verifications
+            WHERE kick_user_id = ?
+              AND discord_id != ?
+              AND status = 'verified'
+            LIMIT 1
+            """,
+            (str(kick_user_id), str(discord_id)),
+        ).fetchone()
+
+    return str(row[0]) if row else None
+
+
+def find_archived_kick_account(kick_user_id, discord_id):
+    if not kick_user_id:
+        raise ValueError("Kick user ID is missing.")
+
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                original_discord_id,
+                discord_username,
+                original_verified_at,
+                archived_at,
+                archive_action,
+                archive_reason
+            FROM verification_archive
+            WHERE kick_user_id = ?
+              AND original_discord_id != ?
+            ORDER BY archived_at DESC
+            """,
+            (str(kick_user_id), str(discord_id)),
+        ).fetchall()
+
+    return [
+        {
+            "discord_id": str(row[0]),
+            "discord_username": row[1],
+            "original_verified_at": row[2],
+            "archived_at": row[3],
+            "archive_action": row[4],
+            "archive_reason": row[5],
+        }
+        for row in rows
+    ]
+
+
+def find_archived_ip_matches(ip_hash, discord_id):
+    """
+    Return archived records with the same IP hash that belong
+    to a different Discord account.
+
+    An IP match is a review signal, not proof of an alt account.
+    """
+    if not ip_hash:
+        return []
+
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                original_discord_id,
+                discord_username,
+                kick_user_id,
+                original_verified_at,
+                archived_at,
+                archive_action,
+                archive_reason
+            FROM verification_archive
+            WHERE ip_hash = ?
+              AND original_discord_id != ?
+            ORDER BY archived_at DESC
+            """,
+            (str(ip_hash), str(discord_id)),
+        ).fetchall()
+
+    return [
+        {
+            "discord_id": str(row[0]),
+            "discord_username": row[1],
+            "kick_user_id": row[2],
+            "original_verified_at": row[3],
+            "archived_at": row[4],
+            "archive_action": row[5],
+            "archive_reason": row[6],
+        }
+        for row in rows
+    ]
+
+
+def find_verified_ip_matches(ip_hash, discord_id):
+    """
+    Return currently verified accounts sharing the same IP hash,
+    excluding the Discord account being verified.
+    """
+    if not ip_hash:
+        return []
+
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                discord_id,
+                discord_username,
+                kick_user_id,
+                verified_at
+            FROM verifications
+            WHERE ip_hash = ?
+              AND discord_id != ?
+              AND status = 'verified'
+            ORDER BY verified_at DESC
+            """,
+            (str(ip_hash), str(discord_id)),
+        ).fetchall()
+
+    return [
+        {
+            "discord_id": str(row[0]),
+            "discord_username": row[1],
+            "kick_user_id": row[2],
+            "verified_at": row[3],
+        }
+        for row in rows
+    ]
+
+
+def get_verified_account(discord_id):
+    """
+    Return the active verified Kick account for a Discord user,
+    or None if the user has no active verified record.
+    """
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+
+        row = conn.execute(
+            """
+            SELECT
+                discord_id,
+                discord_username,
+                kick_user_id,
+                kick_username,
+                verified_at
+            FROM verifications
+            WHERE discord_id = ?
+              AND status = 'verified'
+            LIMIT 1
+            """,
+            (str(discord_id),),
+        ).fetchone()
+
+    return dict(row) if row else None
+
+
+
+async def create_verification_session(discord_id, mode="verify"):
+    if mode not in ("verify", "change"):
+        raise ValueError("Invalid verification session mode.")
+
+    payload = {
+        "discord_id": str(discord_id),
+        "mode": mode,
+    }
+
+    headers = {
+        "X-Bot-Secret": os.environ.get("BOT_API_SECRET", "")
+    }
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{VERIFICATION_API_URL}/api/verification/session",
+            json=payload,
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as response:
+            if response.status != 201:
+                return None
+
+            data = await response.json()
+
+    required_fields = (
+        "session_id",
+        "status",
+        "expires_at",
+        "verification_url",
+    )
+
+    if any(not data.get(field) for field in required_fields):
+        raise ValueError("Verification session response is incomplete.")
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            """
+            INSERT INTO verification_sessions (
+                session_id,
+                discord_id,
+                status,
+                expires_at,
+                created_at,
+                mode
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                data["session_id"],
+                str(discord_id),
+                data["status"],
+                data["expires_at"],
+                now,
+                mode,
+            ),
+        )
+
+        conn.execute(
+            """
+            INSERT INTO verification_events (
+                discord_id,
+                event_type,
+                details,
+                created_at
+            )
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                str(discord_id),
+                "kick_account_change_started"
+                if mode == "change"
+                else "verification_started",
+                (
+                    "Kick account change session created"
+                    if mode == "change"
+                    else "Normal verification session created"
+                ),
+                now,
+            ),
+        )
+
+    return data
+
+
+def archive_and_save_verified_account(
+    discord_id,
+    discord_username,
+    kick_user_id,
+    kick_username,
+    ip_hash,
+    source_session_id=None,
+):
+    """
+    Archive a user's previous verified Kick association if it changes,
+    then save the new verified association in one SQLite transaction.
+    """
+    if not discord_id or not kick_user_id:
+        raise ValueError("Discord ID and Kick user ID are required.")
+
+    discord_id = str(discord_id)
+    kick_user_id = str(kick_user_id)
+    now = datetime.now(timezone.utc).isoformat()
+
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+
+        old = conn.execute(
+            """
+            SELECT
+                discord_username,
+                status,
+                ip_hash,
+                vpn_detected,
+                proxy_detected,
+                duplicate_flag,
+                duplicate_reason,
+                created_at,
+                verified_at,
+                kick_user_id,
+                kick_username
+            FROM verifications
+            WHERE discord_id = ?
+            """,
+            (discord_id,),
+        ).fetchone()
+
+        if old and old[1] == "verified" and old[9] != kick_user_id:
+            conn.execute(
+                """
+                INSERT INTO verification_archive (
+                    original_discord_id,
+                    discord_username,
+                    status,
+                    ip_hash,
+                    vpn_detected,
+                    proxy_detected,
+                    duplicate_flag,
+                    duplicate_reason,
+                    original_created_at,
+                    original_verified_at,
+                    kick_user_id,
+                    archived_at,
+                    archive_action,
+                    archive_reason,
+                    changed_by_discord_id,
+                    source_session_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    discord_id,
+                    old[0],
+                    old[1],
+                    old[2],
+                    old[3],
+                    old[4],
+                    old[5],
+                    old[6],
+                    old[7],
+                    old[8],
+                    old[9],
+                    now,
+                    "kick_account_changed",
+                    f"Kick account changed from {old[10] or old[9]} "
+                    f"to {kick_username or kick_user_id}",
+                    discord_id,
+                    source_session_id,
+                ),
+            )
+
+        conn.execute(
+            """
+            INSERT INTO verifications (
+                discord_id,
+                discord_username,
+                status,
+                ip_hash,
+                vpn_detected,
+                proxy_detected,
+                duplicate_flag,
+                duplicate_reason,
+                verified_at,
+                kick_user_id,
+                kick_username
+            )
+            VALUES (?, ?, 'verified', ?, 0, 0, 0, NULL, ?, ?, ?)
+            ON CONFLICT(discord_id) DO UPDATE SET
+                discord_username = excluded.discord_username,
+                status = 'verified',
+                ip_hash = excluded.ip_hash,
+                vpn_detected = 0,
+                proxy_detected = 0,
+                duplicate_flag = 0,
+                duplicate_reason = NULL,
+                verified_at = excluded.verified_at,
+                kick_user_id = excluded.kick_user_id,
+                kick_username = excluded.kick_username
+            """,
+            (
+                discord_id,
+                discord_username,
+                ip_hash,
+                now,
+                kick_user_id,
+                kick_username,
+            ),
+        )
+
+
+def save_verified_account(
+    discord_id,
+    discord_username,
+    kick_user_id,
+    kick_username,
+    ip_hash,
+):
+    """
+    Save a successful first verification.
+    Never silently replace an existing verified Kick association.
+    Account changes must use archive_and_save_verified_account().
+    """
+    if not discord_id or not kick_user_id:
+        raise ValueError("Discord ID and Kick user ID are required.")
+
+    discord_id = str(discord_id)
+    kick_user_id = str(kick_user_id)
+    now = datetime.now(timezone.utc).isoformat()
+
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+
+        existing = conn.execute(
+            """
+            SELECT status, kick_user_id
+            FROM verifications
+            WHERE discord_id = ?
+            """,
+            (discord_id,),
+        ).fetchone()
+
+        if (
+            existing
+            and existing[0] == "verified"
+            and existing[1]
+            and str(existing[1]) != kick_user_id
+        ):
+            raise ValueError(
+                "This Discord account already has a different verified "
+                "Kick account. Use the account-change flow instead."
+            )
+
+        # Do not allow another Discord account's Kick association
+        # to be overwritten.
+        owner = conn.execute(
+            """
+            SELECT discord_id
+            FROM verifications
+            WHERE kick_user_id = ?
+              AND discord_id != ?
+              AND status = 'verified'
+            LIMIT 1
+            """,
+            (kick_user_id, discord_id),
+        ).fetchone()
+
+        if owner:
+            raise ValueError(
+                "This Kick account is already linked to another "
+                "verified Discord account."
+            )
+
+        conn.execute(
+            """
+            INSERT INTO verifications (
+                discord_id,
+                discord_username,
+                status,
+                ip_hash,
+                vpn_detected,
+                proxy_detected,
+                duplicate_flag,
+                duplicate_reason,
+                verified_at,
+                kick_user_id,
+                kick_username
+            )
+            VALUES (?, ?, 'verified', ?, 0, 0, 0, NULL, ?, ?, ?)
+            ON CONFLICT(discord_id) DO UPDATE SET
+                discord_username = excluded.discord_username,
+                status = 'verified',
+                ip_hash = excluded.ip_hash,
+                vpn_detected = 0,
+                proxy_detected = 0,
+                duplicate_flag = 0,
+                duplicate_reason = NULL,
+                verified_at = excluded.verified_at,
+                kick_user_id = excluded.kick_user_id,
+                kick_username = excluded.kick_username
+            """,
+            (
+                discord_id,
+                discord_username,
+                ip_hash,
+                now,
+                kick_user_id,
+                kick_username,
+            ),
+        )
+
+
+async def assign_wildlines_role(guild, discord_id):
+    """
+    Assign the configured Wildlines verification role
+    to a member in the test server.
+    """
+    role = guild.get_role(WILDLINES_ROLE_ID)
+
+    if role is None:
+        print(
+            "Verification error: WILDLINES_ROLE_ID was not found "
+            "in the test server."
+        )
+        return False
+
+    member = guild.get_member(int(discord_id))
+
+    if member is None:
+        try:
+            member = await guild.fetch_member(int(discord_id))
+        except discord.NotFound:
+            print("Verification error: member is not in the test server.")
+            return False
+        except discord.HTTPException as error:
+            print(f"Verification error: could not fetch member: {error}")
+            return False
+
+    if role in member.roles:
+        return True
+
+    try:
+        await member.add_roles(
+            role,
+            reason="Successful Wildlines account verification",
+        )
+        return True
+    except discord.Forbidden:
+        print(
+            "Verification error: the bot lacks permission to assign "
+            "the verification role, or its role is too low."
+        )
+        return False
+    except discord.HTTPException as error:
+        print(f"Verification error: role assignment failed: {error}")
+        return False
+
+
+async def log_vpn_detection_once(guild, discord_id, session_id):
+    """Log a VPN/proxy detection only once for each session."""
+    event_type = "vpn_proxy_detected"
+
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO verification_events (
+                discord_id, event_type, details, created_at
+            )
+            SELECT ?, ?, ?, ?
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM verification_events
+                WHERE event_type = ?
+                  AND details = ?
+            )
+            """,
+            (
+                str(discord_id),
+                event_type,
+                f"session_id={session_id}",
+                datetime.now(timezone.utc).isoformat(),
+                event_type,
+                f"session_id={session_id}",
+            ),
+        )
+        should_log = cursor.rowcount == 1
+
+    if not should_log:
+        return
+
+    channel = guild.get_channel(VERIFICATION_LOG_CHANNEL_ID)
+
+    if channel is None:
+        print(
+            "[Verification] VPN/proxy detected, but the log channel "
+            "was not found in the configured server."
+        )
+        return
+
+    embed = discord.Embed(
+        title="⚠️ VPN / Proxy Detected",
+        description=(
+            "A verification session was flagged by the security check."
+        ),
+        color=discord.Color.orange(),
+        timestamp=datetime.now(timezone.utc),
+    )
+    embed.add_field(
+        name="Discord account",
+        value=f"<@{discord_id}> (`{discord_id}`)",
+        inline=False,
+    )
+    embed.add_field(
+        name="Result",
+        value="VPN/proxy detected — existing security policy applies.",
+        inline=False,
+    )
+    embed.add_field(
+        name="Session",
+        value=f"`{session_id}`",
+        inline=False,
+    )
+
+    await channel.send(embed=embed)
+
+async def log_verification_decision(
+    guild,
+    discord_id,
+    kick_username,
+    status,
+    reason=None,
+):
+    """Log a verification outcome without exposing IP addresses or secrets."""
+    if status not in {
+        "verified",
+        "duplicate_kick",
+        "review_required",
+        "rejected",
+    }:
+        return
+
+    channel = guild.get_channel(VERIFICATION_LOG_CHANNEL_ID)
+
+    if channel is None:
+        print(
+            "[Verification Debug] Log channel not found in server "
+            f"{guild.name} (ID: {guild.id}). "
+            f"Configured channel ID: {VERIFICATION_LOG_CHANNEL_ID}"
+        )
+        return
+
+    embed = discord.Embed(
+        title="Wildlines Verification",
+        color=(
+            discord.Color.green()
+            if status == "verified"
+            else discord.Color.orange()
+        ),
+        timestamp=datetime.now(timezone.utc),
+    )
+
+    embed.add_field(
+        name="Discord Account",
+        value=f"<@{discord_id}> (`{discord_id}`)",
+        inline=False,
+    )
+    embed.add_field(
+        name="Kick Username",
+        value=(kick_username or "Unavailable")[:256],
+        inline=True,
+    )
+    embed.add_field(name="Result", value=status, inline=True)
+
+    if reason:
+        embed.add_field(
+            name="Details",
+            value=reason[:1000],
+            inline=False,
+        )
+
+    try:
+        await channel.send(embed=embed)
+    except (discord.Forbidden, discord.HTTPException) as error:
+        print(f"Verification warning: couldn't send log: {error}")
+
+
+class VerificationTicketReasonView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    async def save_reason(
+        self,
+        interaction: discord.Interaction,
+        reason: str,
+    ):
+        if interaction.channel is None:
+            await interaction.response.send_message(
+                "I couldn't identify this ticket channel.",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            with sqlite3.connect(DB_PATH) as conn:
+                row = conn.execute(
+                    """
+                    SELECT session_id, discord_id, status
+                    FROM verification_review_tickets
+                    WHERE channel_id = ?
+                    """,
+                    (str(interaction.channel.id),),
+                ).fetchone()
+
+                if row is None:
+                    await interaction.response.send_message(
+                        "This channel isn't a registered verification ticket.",
+                        ephemeral=True,
+                    )
+                    return
+
+                session_id, discord_id, status = row
+
+                if str(interaction.user.id) != str(discord_id):
+                    await interaction.response.send_message(
+                        "Only the user who opened this ticket can select "
+                        "the reason.",
+                        ephemeral=True,
+                    )
+                    return
+
+                if status != "pending":
+                    await interaction.response.send_message(
+                        "This ticket has already been reviewed or closed.",
+                        ephemeral=True,
+                    )
+                    return
+
+                conn.execute(
+                    """
+                    UPDATE verification_review_tickets
+                    SET reason = ?
+                    WHERE session_id = ?
+                    """,
+                    (reason, session_id),
+                )
+
+            await interaction.response.send_message(
+                f"Your reason has been recorded: **{reason}**. "
+                "An authorized Wildlines reviewer will look into your case.",
+                ephemeral=True,
+            )
+
+            # Notify reviewers in the ticket channel.
+            await interaction.channel.send(
+                f"**User's selected reason:** {reason}\n"
+                f"**Discord user ID:** {discord_id}\n"
+                f"**Verification session:** `{session_id}`"
+            )
+
+        except sqlite3.Error as error:
+            print(
+                "[Verification Tickets] Failed to save reason:",
+                error,
+            )
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    "I couldn't save your selection. Please try again later.",
+                    ephemeral=True,
+                )
+
+    @discord.ui.button(
+        label="Same household",
+        style=discord.ButtonStyle.primary,
+        custom_id="wildlines:ticket_reason:household",
+    )
+    async def same_household(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        await self.save_reason(interaction, "Same household")
+
+    @discord.ui.button(
+        label="No access to old Discord",
+        style=discord.ButtonStyle.secondary,
+        custom_id="wildlines:ticket_reason:old_discord",
+    )
+    async def old_discord(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        await self.save_reason(
+            interaction,
+            "No access to old Discord account",
+        )
+
+    @discord.ui.button(
+        label="Other reason",
+        style=discord.ButtonStyle.secondary,
+        custom_id="wildlines:ticket_reason:other",
+    )
+    async def other_reason(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        await self.save_reason(interaction, "Other reason")
+
+
+
+class VerificationTicketDecisionView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+
+    async def decide(self, interaction, decision):
+        if interaction.user.id not in VERIFICATION_REVIEWER_IDS:
+            await interaction.followup.send(
+                "You are not authorized to review verification tickets.",
+                ephemeral=True
+            )
+            return
+
+        if interaction.channel is None:
+            await interaction.followup.send(
+                "This ticket channel could not be found.",
+                ephemeral=True
+            )
+            return
+
+        processing_status = (
+            "approval_processing"
+            if decision == "verified"
+            else "rejection_processing"
+        )
+
+        try:
+            with sqlite3.connect(DB_PATH) as conn:
+                row = conn.execute(
+                    """
+                    SELECT session_id, discord_id, reason, status, reviewed_by
+                    FROM verification_review_tickets
+                    WHERE channel_id = ?
+                    """,
+                    (str(interaction.channel.id),)
+                ).fetchone()
+
+            if row is None:
+                await interaction.followup.send(
+                    "No verification ticket is registered for this channel.",
+                    ephemeral=True
+                )
+                return
+
+            session_id, discord_id, reason, ticket_status, reviewed_by = row
+
+            if ticket_status in ("approved", "rejected"):
+                await interaction.followup.send(
+                    "This ticket has already been reviewed.",
+                    ephemeral=True
+                )
+                return
+
+            # A reviewer may retry their own interrupted decision.
+            retrying = ticket_status == processing_status
+
+            if retrying:
+                if str(reviewed_by) != str(interaction.user.id):
+                    await interaction.followup.send(
+                        "Another reviewer is already processing this ticket.",
+                        ephemeral=True
+                    )
+                    return
+            elif ticket_status != "pending":
+                await interaction.followup.send(
+                    "This ticket is already being processed. "
+                    "Only the reviewer who started that decision can retry it.",
+                    ephemeral=True
+                )
+                return
+
+            # Validate approval requirements before claiming the ticket.
+            if decision == "verified":
+                if not reason:
+                    await interaction.followup.send(
+                        "The user must select a ticket reason before approval.",
+                        ephemeral=True
+                    )
+                    return
+
+                async with aiohttp.ClientSession() as http:
+                    result = await fetch_verification_result(http, session_id)
+
+                    if result is None:
+                        await interaction.followup.send(
+                            "Could not retrieve the verification result. Try again.",
+                            ephemeral=True
+                        )
+                        return
+
+                    if result.get("status") != "review_required":
+                        await interaction.followup.send(
+                            "This session is no longer awaiting manual review. "
+                            "Refresh the ticket status before deciding.",
+                            ephemeral=True
+                        )
+                        return
+
+                    if str(result.get("discord_id")) != str(discord_id):
+                        await interaction.followup.send(
+                            "The session Discord ID does not match this ticket.",
+                            ephemeral=True
+                        )
+                        return
+
+                    with sqlite3.connect(DB_PATH) as conn:
+                        mode_row = conn.execute(
+                            """
+                            SELECT mode
+                            FROM verification_sessions
+                            WHERE session_id = ? AND discord_id = ?
+                            """,
+                            (session_id, str(discord_id))
+                        ).fetchone()
+
+                    if (
+                        mode_row is None
+                        or result.get("mode", "verify") != mode_row[0]
+                    ):
+                        await interaction.followup.send(
+                            "The verification session mode could not be confirmed.",
+                            ephemeral=True
+                        )
+                        return
+
+                    if result.get("security_check") != "clear":
+                        await interaction.followup.send(
+                            "Required security checks have not passed.",
+                            ephemeral=True
+                        )
+                        return
+
+                    kick_user_id = result.get("kick_user_id")
+
+                    if not kick_user_id:
+                        await interaction.followup.send(
+                            "No Kick account was found for this session.",
+                            ephemeral=True
+                        )
+                        return
+
+                    owner_id = find_kick_account_owner(
+                        kick_user_id,
+                        discord_id
+                    )
+
+                    if owner_id is not None:
+                        await interaction.followup.send(
+                            "This Kick account is currently linked to another "
+                            "verified Discord account. Resolve that conflict "
+                            "before approving.",
+                            ephemeral=True
+                        )
+                        return
+
+            # Claim the ticket BEFORE submitting the backend decision.
+            if not retrying:
+                now = datetime.now(timezone.utc).isoformat()
+
+                with sqlite3.connect(DB_PATH) as conn:
+                    cursor = conn.execute(
+                        """
+                        UPDATE verification_review_tickets
+                        SET status = ?,
+                            reviewed_by = ?,
+                            reviewed_at = ?
+                        WHERE session_id = ?
+                          AND status = 'pending'
+                        """,
+                        (
+                            processing_status,
+                            str(interaction.user.id),
+                            now,
+                            session_id
+                        )
+                    )
+
+                if cursor.rowcount != 1:
+                    await interaction.followup.send(
+                        "Another reviewer claimed this ticket first. "
+                        "Please refresh and check its status.",
+                        ephemeral=True
+                    )
+                    return
+
+            # A failed or timed-out request leaves the ticket in its
+            # processing state so this same reviewer can safely retry.
+            async with aiohttp.ClientSession() as http:
+                submitted = await submit_manual_review_decision(
+                    http,
+                    session_id,
+                    decision
+                )
+
+            if not submitted:
+                await interaction.followup.send(
+                    "The backend did not confirm the decision. "
+                    "This ticket remains in processing; the same reviewer "
+                    "can click the same decision button again to retry.",
+                    ephemeral=True
+                )
+                return
+
+            if decision == "rejected":
+                with sqlite3.connect(DB_PATH) as conn:
+                    cursor = conn.execute(
+                        """
+                        UPDATE verification_review_tickets
+                        SET status = 'rejected'
+                        WHERE session_id = ?
+                          AND status = 'rejection_processing'
+                          AND reviewed_by = ?
+                        """,
+                        (session_id, str(interaction.user.id))
+                    )
+
+                if cursor.rowcount != 1:
+                    await interaction.followup.send(
+                        "The backend recorded the denial, but the local "
+                        "ticket status needs checking.",
+                        ephemeral=True
+                    )
+                    return
+
+                await interaction.followup.send(
+                    "Verification denied and recorded.",
+                    ephemeral=True
+                )
+
+                await interaction.channel.send(
+                    f"Verification denied by <@{interaction.user.id}>.\n"
+                    f"Session: `{session_id}`"
+                )
+
+            else:
+                # Do not mark this ticket approved here.
+                # The sync loop should mark it approved only after
+                # saving the account and completing the approval flow.
+                await interaction.followup.send(
+                    "Approval recorded. The bot will finish saving the "
+                    "verification and updating the user's role.",
+                    ephemeral=True
+                )
+
+                await interaction.channel.send(
+                    f"Verification approval recorded by "
+                    f"<@{interaction.user.id}>.\n"
+                    f"Session: `{session_id}`"
+                )
+
+        except (
+            aiohttp.ClientError,
+            asyncio.TimeoutError,
+            sqlite3.Error,
+            ValueError,
+            KeyError
+        ) as error:
+            print(f"Verification ticket decision error: {error}")
+            await interaction.followup.send(
+                "An error occurred while processing this decision. "
+                "Check the bot logs before retrying.",
+                ephemeral=True
+            )
+
+    @discord.ui.button(
+        label="Approve Verification",
+        style=discord.ButtonStyle.success,
+        custom_id="wildlines:ticket_review:approve",
+    )
+    async def approve(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        await interaction.response.defer(ephemeral=True)
+        await self.decide(interaction, "verified")
+
+    @discord.ui.button(
+        label="Deny Verification",
+        style=discord.ButtonStyle.danger,
+        custom_id="wildlines:ticket_review:deny",
+    )
+    async def deny(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        await interaction.response.defer(ephemeral=True)
+        await self.decide(interaction, "rejected")
+
+
+async def create_verification_review_ticket(
+    guild,
+    discord_id,
+    session_id,
+    kick_username,
+    review_details,
+):
+    """Create or recover the private ticket for a verification session."""
+
+    discord_id = str(discord_id)
+    session_id = str(session_id)
+
+    # Check whether this session already has a ticket.
+    with sqlite3.connect(DB_PATH) as conn:
+        existing = conn.execute(
+            """
+            SELECT channel_id, status
+            FROM verification_review_tickets
+            WHERE session_id = ?
+            """,
+            (session_id,),
+        ).fetchone()
+
+        if existing and existing[0]:
+            existing_channel = guild.get_channel(int(existing[0]))
+
+            if existing_channel is not None:
+                return existing_channel
+
+        if existing and existing[1] != "pending":
+            return None
+
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO verification_review_tickets (
+                session_id,
+                discord_id,
+                status
+            )
+            VALUES (?, ?, 'pending')
+            """,
+            (session_id, discord_id),
+        )
+
+    # Resolve the ticket owner.
+    member = guild.get_member(int(discord_id))
+
+    if member is None:
+        try:
+            member = await guild.fetch_member(int(discord_id))
+        except (discord.NotFound, discord.HTTPException):
+            print(
+                "[Verification Tickets] Could not find ticket owner:",
+                discord_id,
+            )
+            return None
+
+    # Locate the configured ticket category.
+    category = guild.get_channel(
+        VERIFICATION_TICKET_CATEGORY_ID
+    )
+
+    if not isinstance(category, discord.CategoryChannel):
+        print(
+            "[Verification Tickets] Configured category was not found "
+            "or is not a category."
+        )
+        return None
+
+    # Only the ticket owner, the three reviewers, and the bot
+    # can see the ticket.
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(
+            view_channel=False
+        ),
+        member: discord.PermissionOverwrite(
+            view_channel=True,
+            send_messages=True,
+            read_message_history=True,
+            attach_files=True,
+            embed_links=True,
+        ),
+    }
+
+    for reviewer_id in VERIFICATION_REVIEWER_IDS:
+        reviewer = guild.get_member(reviewer_id)
+
+        if reviewer is None:
+            try:
+                reviewer = await guild.fetch_member(reviewer_id)
+            except (discord.NotFound, discord.HTTPException):
+                print(
+                    "[Verification Tickets] Reviewer is not in the server:",
+                    reviewer_id,
+                )
+                continue
+
+        overwrites[reviewer] = discord.PermissionOverwrite(
+            view_channel=True,
+            send_messages=True,
+            read_message_history=True,
+            manage_messages=True,
+        )
+
+    bot_member = guild.me
+
+    if bot_member is not None:
+        overwrites[bot_member] = discord.PermissionOverwrite(
+            view_channel=True,
+            send_messages=True,
+            read_message_history=True,
+            manage_channels=True,
+            manage_messages=True,
+        )
+
+    safe_name = "".join(
+        char.lower()
+        for char in (kick_username or "user")
+        if char.isalnum() or char == "-"
+    )[:30] or "user"
+
+    try:
+        channel = await guild.create_text_channel(
+            name=f"verify-review-{safe_name}",
+            category=category,
+            overwrites=overwrites,
+            topic=(
+                f"Wildlines verification review | "
+                f"Discord ID: {discord_id} | Session: {session_id}"
+            ),
+            reason="Wildlines verification requires admin review",
+        )
+
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                """
+                UPDATE verification_review_tickets
+                SET channel_id = ?
+                WHERE session_id = ?
+                """,
+                (str(channel.id), session_id),
+            )
+
+        embed = discord.Embed(
+            title="Wildlines Verification Review",
+            description=(
+                "This verification needs manual review. "
+                "A matching Kick account or IP address is not, by itself, "
+                "proof of an alternate account."
+            ),
+            color=discord.Color.orange(),
+        )
+
+        embed.add_field(
+            name="Discord user",
+            value=f"{member.mention}\nID: `{discord_id}`",
+            inline=False,
+        )
+        embed.add_field(
+            name="Kick username",
+            value=kick_username or "Not available",
+            inline=True,
+        )
+        embed.add_field(
+            name="Verification session",
+            value=f"`{session_id}`",
+            inline=False,
+        )
+        embed.add_field(
+            name="Review details",
+            value=(review_details or "No additional details provided")[:1024],
+            inline=False,
+        )
+        embed.add_field(
+            name="Next step",
+            value=(
+                "The user should select a reason below. "
+                "Reviewers can discuss the evidence here."
+            ),
+            inline=False,
+        )
+
+        await channel.send(
+            content=member.mention,
+            embed=embed,
+            view=VerificationTicketReasonView(),
+        )
+
+        await channel.send(
+            "Authorized reviewers can record their decision below.",
+            view=VerificationTicketDecisionView(),
+        )
+
+        return channel
+
+    except (discord.Forbidden, discord.HTTPException, sqlite3.Error) as error:
+        print(
+            "[Verification Tickets] Ticket creation failed:",
+            error,
+        )
+        return None
+
+
+async def verification_session_sync_loop():
+    await bot.wait_until_ready()
+
+    def update_local_status(session_id, discord_id, status, details):
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                """
+                UPDATE verification_sessions
+                SET status = ?
+                WHERE session_id = ?
+                """,
+                (status, session_id),
+            )
+
+            conn.execute(
+                """
+                INSERT INTO verification_events (
+                    discord_id, event_type, details, created_at
+                )
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    str(discord_id),
+                    "verification_status_changed",
+                    details,
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+
+
+    async def finish_approved_session(
+        guild,
+        session_id,
+        discord_id,
+        mode,
+        result,
+        kick_user_id,
+        kick_username,
+        ip_hash,
+    ):
+        """Save the account, assign the role, then finalize the session."""
+
+        try:
+            if mode == "change":
+                archive_and_save_verified_account(
+                    discord_id,
+                    result.get("discord_username"),
+                    kick_user_id,
+                    kick_username,
+                    ip_hash,
+                    source_session_id=session_id,
+                )
+            else:
+                save_verified_account(
+                    discord_id,
+                    result.get("discord_username"),
+                    kick_user_id,
+                    kick_username,
+                    ip_hash,
+                )
+
+        except (sqlite3.Error, ValueError) as error:
+            print(
+                "[Verification] Account save failed; session will retry. "
+                f"Session {session_id}: {error}"
+            )
+            return False
+
+        # Do not finalize the local session unless role assignment succeeds.
+        role_assigned = await assign_wildlines_role(guild, discord_id)
+
+        if not role_assigned:
+            print(
+                "[Verification] Account was saved, but role assignment "
+                f"failed for {discord_id}. Session will retry."
+            )
+            return False
+
+        update_local_status(
+            session_id,
+            discord_id,
+            "verified",
+            "Backend approval confirmed, account saved, and role assigned.",
+        )
+
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                """
+                UPDATE verification_review_tickets
+                SET status = 'approved'
+                WHERE session_id = ?
+                  AND status = 'approval_processing'
+                """,
+                (session_id,),
+            )
+
+        # Update the Discord nickname after successful account save and role assignment.
+        try:
+            member = guild.get_member(int(discord_id))
+
+            if member is None:
+                member = await guild.fetch_member(int(discord_id))
+
+            if member.nick != kick_username:
+                await member.edit(
+                    nick=kick_username,
+                    reason="Successful Wildlines account verification",
+                )
+
+        except discord.Forbidden:
+            print(
+                f"[Verification] Cannot change nickname for {discord_id}. "
+                "Check Manage Nicknames permission and role hierarchy."
+            )
+
+        except (discord.HTTPException, ValueError) as error:
+            print(
+                f"[Verification] Nickname update failed for {discord_id}: {error}"
+            )
+
+        await log_verification_decision(
+            guild,
+            discord_id,
+            kick_username,
+            "verified",
+            "Backend approval confirmed, account saved, and role assigned.",
+        )
+
+        return True
+
+
+    while not bot.is_closed():
+        try:
+            # Keep locally unfinished sessions eligible for retries.
+            # A session is marked verified locally only after its
+            # approved account has been saved successfully.
+            with sqlite3.connect(DB_PATH) as conn:
+                rows = conn.execute(
+                    """
+                    SELECT session_id, discord_id, status, expires_at, mode
+                    FROM verification_sessions
+                    WHERE status IN (
+                        'pending',
+                        'accounts_connected',
+                        'ready_for_bot_review',
+                        'review_required'
+                    )
+                    """
+                ).fetchall()
+
+            async with aiohttp.ClientSession() as http:
+                for (
+                    session_id,
+                    discord_id,
+                    old_status,
+                    expires_at,
+                    mode,
+                ) in rows:
+                    try:
+                        # 1. Fetch the latest backend session status.
+                        async with http.get(
+                            f"{VERIFICATION_API_URL}/api/verification/"
+                            f"session/{session_id}",
+                            timeout=aiohttp.ClientTimeout(total=15),
+                        ) as response:
+                            if response.status == 404:
+                                update_local_status(
+                                    session_id,
+                                    discord_id,
+                                    "expired",
+                                    "Backend session was not found or expired.",
+                                )
+                                continue
+
+                            if response.status != 200:
+                                continue
+
+                            remote_data = await response.json()
+                            new_status = remote_data.get(
+                                "status", old_status
+                            )
+
+                        # Log a VPN/proxy detection once per session.
+                        if (
+                            remote_data.get("status") == "vpn_blocked"
+                            or remote_data.get("security_check") == "blocked"
+                        ):
+                            guild = bot.get_guild(GUILD_ID)
+
+                            if guild is not None:
+                                await log_vpn_detection_once(
+                                    guild,
+                                    discord_id,
+                                    session_id,
+                                )
+
+                        # Do not prematurely mark an approved session
+                        # locally verified. It still needs its database
+                        # save to succeed.
+                        if (
+                            new_status != old_status
+                            and new_status != "verified"
+                        ):
+                            update_local_status(
+                                session_id,
+                                discord_id,
+                                new_status,
+                                f"Backend status changed to {new_status}",
+                            )
+
+                        # Process sessions awaiting review and sessions
+                        # already approved by the backend.
+                        if new_status not in (
+                            "ready_for_bot_review",
+                            "verified",
+                            "review_required",
+                        ):
+                            continue
+
+                        result = await fetch_verification_result(
+                            http, session_id
+                        )
+
+                        if result is None:
+                            continue
+
+                        # Retry creating the support ticket for sessions awaiting review.
+                        if new_status == "review_required":
+                            if str(result.get("discord_id")) != str(discord_id):
+                                print(
+                                    "[Verification Tickets] Discord ID mismatch for "
+                                    f"session {session_id}."
+                                )
+                                continue
+
+                            if result.get("mode", "verify") != mode:
+                                print(
+                                    "[Verification Tickets] Session mode mismatch for "
+                                    f"session {session_id}."
+                                )
+                                continue
+
+                            guild = bot.get_guild(GUILD_ID)
+
+                            if guild is None:
+                                continue
+
+                            ticket = await create_verification_review_ticket(
+                                guild=guild,
+                                discord_id=discord_id,
+                                session_id=session_id,
+                                kick_username=result.get("kick_username"),
+                                review_details=(
+                                    "This verification was marked for manual review. "
+                                    "Check the verification logs and account/IP history."
+                                ),
+                            )
+
+                            if ticket is None:
+                                print(
+                                    "[Verification Tickets] Ticket creation will be retried "
+                                    f"for session {session_id}."
+                                )
+
+                            continue
+
+                        # 2. Confirm that the result belongs to this user.
+                        if str(result.get("discord_id")) != str(discord_id):
+                            print(
+                                "[Verification] Discord ID mismatch. "
+                                f"Session: {session_id}"
+                            )
+                            continue
+
+                        # 3. Confirm that local and backend session modes match.
+                        result_mode = result.get("mode", "verify")
+
+                        if result_mode != mode:
+                            print(
+                                "[Verification] Session mode mismatch for "
+                                f"{session_id}: local={mode}, "
+                                f"backend={result_mode}. Skipping safely."
+                            )
+                            continue
+
+                        kick_user_id = result.get("kick_user_id")
+                        kick_username = result.get("kick_username")
+                        ip_hash = result.get("ip_hash")
+
+                        if (
+                            not kick_user_id
+                            or not kick_username
+                            or result.get("security_check") != "clear"
+                        ):
+                            print(
+                                "[Verification] Required account details "
+                                f"or security checks are missing: {session_id}"
+                            )
+                            continue
+
+                        guild = bot.get_guild(GUILD_ID)
+
+                        if guild is None:
+                            print(
+                                "[Verification] Test server not found. "
+                                f"Configured GUILD_ID: {GUILD_ID}"
+                            )
+                            continue
+
+                        role = guild.get_role(WILDLINES_ROLE_ID)
+
+                        if role is None:
+                            print(
+                                "[Verification] WILDLINES_ROLE_ID does "
+                                "not exist in the configured server."
+                            )
+                            continue
+
+                        # 4. Recovery path: the backend already approved
+                        # this session, but the account save may have
+                        # failed during an earlier loop.
+                        #
+                        # Do not attempt to change an already-final backend
+                        # decision to duplicate_kick or review_required.
+
+                        if new_status == "verified":
+                            await finish_approved_session(
+                                guild,
+                                session_id,
+                                discord_id,
+                                mode,
+                                result,
+                                kick_user_id,
+                                kick_username,
+                                ip_hash,
+                            )
+                            continue
+
+                        # 5. Check account ownership and IP history before
+                        # approving a session that is still awaiting review.
+                        try:
+                            owner_id = find_kick_account_owner(
+                                kick_user_id, discord_id
+                            )
+
+                            archived_kick_matches = (
+                                find_archived_kick_account(
+                                    kick_user_id, discord_id
+                                )
+                            )
+
+                            active_ip_matches = (
+                                find_verified_ip_matches(
+                                    ip_hash, discord_id
+                                )
+                            )
+
+                            archived_ip_matches = (
+                                find_archived_ip_matches(
+                                    ip_hash, discord_id
+                                )
+                            )
+
+                        except (sqlite3.Error, ValueError) as error:
+                            print(
+                                "[Verification] Database checks failed:",
+                                error,
+                            )
+                            continue
+
+                        # An active Kick account linked to another Discord account
+                        # requires admin review; a match alone does not prove an alt.
+                        if owner_id is not None:
+                            submitted = await submit_verification_decision(
+                                http, session_id, "review_required"
+                            )
+
+                            if not submitted:
+                                continue
+
+                            update_local_status(
+                                session_id,
+                                discord_id,
+                                "review_required",
+                                f"Kick account is linked to another active Discord ID: {owner_id}.",
+                            )
+
+                            await log_verification_decision(
+                                guild,
+                                discord_id,
+                                kick_username,
+                                "review_required",
+                                "Active Kick-account ownership conflict. "
+                                f"Other Discord ID: {owner_id}. "
+                                "Admin review required; do not automatically label as an alt.",
+                            )
+                            continue
+
+                        # An archived Kick account belonging to someone
+                        # else requires manual review.
+                        if archived_kick_matches:
+                            previous_ids = ", ".join(
+                                str(match["discord_id"])
+                                for match in archived_kick_matches[:5]
+                            )
+
+                            submitted = await submit_verification_decision(
+                                http, session_id, "review_required"
+                            )
+
+                            if not submitted:
+                                continue
+
+                            update_local_status(
+                                session_id,
+                                discord_id,
+                                "review_required",
+                                "Kick account matched archived history.",
+                            )
+
+                            await log_verification_decision(
+                                guild,
+                                discord_id,
+                                kick_username,
+                                "review_required",
+                                "Historical Kick account match. "
+                                f"Previous Discord ID(s): {previous_ids}. "
+                                "Admin review is required.",
+                            )
+                            continue
+
+                        # Matching active IP hashes require review,
+                        # not automatic rejection.
+                        if active_ip_matches:
+                            matched_ids = ", ".join(
+                                str(match["discord_id"])
+                                for match in active_ip_matches[:5]
+                            )
+
+                            submitted = await submit_verification_decision(
+                                http, session_id, "review_required"
+                            )
+
+                            if not submitted:
+                                continue
+
+                            update_local_status(
+                                session_id,
+                                discord_id,
+                                "review_required",
+                                "IP hash matched another active account.",
+                            )
+
+
+                            mentioned_accounts = ", ".join(
+                                "<@" + str(match["discord_id"]) + ">"
+                                for match in active_ip_matches[:5]
+                            )
+
+                            await log_verification_decision(
+                                guild,
+                                discord_id,
+                                kick_username,
+                                "review_required",
+                                "Active IP-hash match detected. "
+                                f"Other Discord account(s): {mentioned_accounts}. "
+                                "Possible shared connection; review required.",
+                            )
+                            continue
+
+
+                        # Matching archived IP hashes also require review.
+                        if archived_ip_matches:
+                            matched_ids = ", ".join(
+                                str(match["discord_id"])
+                                for match in archived_ip_matches[:5]
+                            )
+
+                            submitted = await submit_verification_decision(
+                                http, session_id, "review_required"
+                            )
+
+                            if not submitted:
+                                continue
+
+                            update_local_status(
+                                session_id,
+                                discord_id,
+                                "review_required",
+                                "IP hash matched archived account history.",
+                            )
+
+                            await log_verification_decision(
+                                guild,
+                                discord_id,
+                                kick_username,
+                                "review_required",
+                                "Archived IP-hash match detected. "
+                                f"Historical Discord ID(s): {matched_ids}. "
+                                "Admin review required.",
+                            )
+                            continue
+
+
+                        # 6. Ask the backend to approve the session first.
+                        submitted = await submit_verification_decision(
+                            http, session_id, "verified"
+                        )
+
+                        if not submitted:
+                            print(
+                                "[Verification] Approval wasn't confirmed. "
+                                f"Session {session_id} will be retried."
+                            )
+                            continue
+
+
+                        # 7. Save the account and assign the role
+                        # through the finalization helper.
+                        await finish_approved_session(
+                            guild,
+                            session_id,
+                            discord_id,
+                            mode,
+                            result,
+                            kick_user_id,
+                            kick_username,
+                            ip_hash,
+                        )
+
+                    except (
+                        aiohttp.ClientError,
+                        asyncio.TimeoutError,
+                        ValueError,
+                        sqlite3.Error,
+                        discord.HTTPException,
+                    ) as error:
+                        print(
+                            "[Verification] Session processing error:",
+                            error,
+                        )
+                        continue
+
+        except sqlite3.Error as error:
+            print(
+                f"[Verification] Sync database error: {error}"
+            )
+
         await asyncio.sleep(10)
 
 
