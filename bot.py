@@ -6370,6 +6370,11 @@ async def gamdom_big_win_listener():
 
                         if not gamdom_recent_feed_initialized:
 
+                            print(
+                                f"🟡 Initializing recent-bets feed. "
+                                f"Snapshot contains {len(all_bets)} bets."
+                            )
+
                             for bet_data in all_bets:
 
                                 if not isinstance(
@@ -6395,6 +6400,11 @@ async def gamdom_big_win_listener():
                                     )
 
                             gamdom_recent_feed_initialized = True
+
+                            print(
+                                f"✅ Recent-bets feed initialized. "
+                                f"Tracking {len(gamdom_seen_wins)} seen win IDs."
+                            )
 
                             continue
 
@@ -6688,6 +6698,30 @@ async def gamdom_big_win_listener():
                                 f"{win_multiplier:.2f}x | "
                                 f"profit=${profit:,.2f}"
                             )
+
+                            # ---------------------------------------------------------
+                            # SCHEDULE A KICK CLIP FOR THE STREAMER
+                            # ---------------------------------------------------------
+
+                            streamer_key = str(username).casefold()
+                            streamer_info = STREAMER_MAP.get(streamer_key)
+
+                            if streamer_info:
+                                clip_task = asyncio.create_task(
+                                    create_big_win_clip(
+                                        username=username,
+                                        display_name=streamer_info["display_name"],
+                                        win_time=win_time,
+                                    )
+                                )
+
+                                pending_clip_tasks.add(clip_task)
+                                clip_task.add_done_callback(pending_clip_tasks.discard)
+
+                                print(
+                                    f"🎞️ Clip job scheduled for "
+                                    f"{streamer_info['display_name']}"
+                                )
 
                             game_thumb = bet_data.get(
                                 "gameThumb"
