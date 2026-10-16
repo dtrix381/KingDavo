@@ -313,15 +313,15 @@ async def on_ready():
     # KICK ROLLING BUFFER RECORDER
     # -----------------------------------------
 
-    if (
-        not hasattr(bot, "kick_recorder_task_handle")
-        or bot.kick_recorder_task_handle.done()
-    ):
-        bot.kick_recorder_task_handle = asyncio.create_task(
-            kick_recorder_task()
-        )
+    # if (
+    #     not hasattr(bot, "kick_recorder_task_handle")
+    #     or bot.kick_recorder_task_handle.done()
+    # ):
+    #    bot.kick_recorder_task_handle = asyncio.create_task(
+    #        kick_recorder_task()
+    #    )
 
-        print("🎥 Kick rolling-buffer recorder task started")
+    #    print("🎥 Kick rolling-buffer recorder task started")
 
     # -----------------------------------------
     # SERVER TAG DATABASE
@@ -6703,29 +6703,29 @@ async def gamdom_big_win_listener():
                             # SCHEDULE A KICK CLIP FOR THE STREAMER
                             # ---------------------------------------------------------
 
-                            streamer_key = str(username).casefold()
-                            streamer_info = STREAMER_MAP.get(streamer_key)
+                            # streamer_key = str(username).casefold()
+                            # streamer_info = STREAMER_MAP.get(streamer_key)
 
-                            if streamer_info:
-                                clip_task = asyncio.create_task(
-                                    create_big_win_clip(
-                                        username=username,
-                                        display_name=streamer_info["display_name"],
-                                        win_time=win_time,
-                                    )
-                                )
+                            # if streamer_info:
+                            #    clip_task = asyncio.create_task(
+                            #        create_big_win_clip(
+                            #            username=username,
+                            #            display_name=streamer_info["display_name"],
+                            #            win_time=win_time,
+                            #        )
+                            #    )
 
-                                pending_clip_tasks.add(clip_task)
-                                clip_task.add_done_callback(pending_clip_tasks.discard)
+                            #    pending_clip_tasks.add(clip_task)
+                            #    clip_task.add_done_callback(pending_clip_tasks.discard)
 
-                                print(
-                                    f"🎞️ Clip job scheduled for "
-                                    f"{streamer_info['display_name']}"
-                                )
+                            #    print(
+                            #        f"🎞️ Clip job scheduled for "
+                            #        f"{streamer_info['display_name']}"
+                            #    )
 
-                            game_thumb = bet_data.get(
-                                "gameThumb"
-                            )
+                            # game_thumb = bet_data.get(
+                            #    "gameThumb"
+                            # )
 
                             # =================================================
                             # EMBED
