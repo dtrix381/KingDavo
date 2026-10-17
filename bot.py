@@ -6723,9 +6723,9 @@ async def gamdom_big_win_listener():
                             #        f"{streamer_info['display_name']}"
                             #    )
 
-                            # game_thumb = bet_data.get(
-                            #    "gameThumb"
-                            # )
+                            game_thumb = bet_data.get(
+                                "gameThumb"
+                            )
 
                             # =================================================
                             # EMBED
