@@ -18760,7 +18760,7 @@ async def on_member_join(member):
 # DISCORD AUTO PROMOTION POSTS
 # =========================================
 
-AUTO_POST_INTERVAL = 6 * 60 * 60  # 6 hours
+AUTO_POST_INTERVAL = 7 * 24 * 60 * 60  # 7 days
 
 AUTO_POSTS = [
 
@@ -19033,63 +19033,63 @@ async def send_auto_promotion_post(post):
 
         return False
 
-# =========================================
-# AUTO POST ROTATION
-# =========================================
+def load_auto_post_state():
 
-auto_post_order = []
-auto_post_index = 0
-auto_post_first_cycle = True
+    conn = sqlite3.connect(DB_PATH)
+
+    try:
+        row = conn.execute("""
+            SELECT last_post_time, next_post_index, post_order
+            FROM auto_post_scheduler
+            WHERE id = 1
+        """).fetchone()
+
+        return row
+
+    finally:
+        conn.close()
+
+
+def save_auto_post_state(
+    last_post_time,
+    next_post_index,
+    post_order
+):
+
+    conn = sqlite3.connect(DB_PATH)
+
+    try:
+        conn.execute("""
+            UPDATE auto_post_scheduler
+            SET last_post_time = ?,
+                next_post_index = ?,
+                post_order = ?
+            WHERE id = 1
+        """, (
+            last_post_time,
+            next_post_index,
+            ",".join(map(str, post_order))
+        ))
+
+        conn.commit()
+
+    finally:
+        conn.close()
 
 
 def create_auto_post_order():
 
-    global auto_post_order
-    global auto_post_index
-    global auto_post_first_cycle
+    order = list(range(len(AUTO_POSTS)))
 
-    post_count = len(AUTO_POSTS)
-
-    # -----------------------------------------
-    # FIRST CYCLE
-    # POST 7 MUST BE FIRST
-    # -----------------------------------------
-
-    if auto_post_first_cycle:
-        auto_post_order = list(
-            range(post_count)
-        )
-
-        random.shuffle(
-            auto_post_order
-        )
-
-        auto_post_first_cycle = False
-
-    # -----------------------------------------
-    # FUTURE CYCLES
-    # FULLY RANDOM
-    # -----------------------------------------
-
-    else:
-
-        auto_post_order = list(
-            range(post_count)
-        )
-
-        random.shuffle(
-            auto_post_order
-        )
-
-    auto_post_index = 0
+    random.shuffle(order)
 
     print(
         "📢 New auto-post order:",
-        [
-            index + 1
-            for index in auto_post_order
-        ]
+        [index + 1 for index in order]
     )
+
+    return order
+
 
 # =========================================
 # AUTO POST SCHEDULER
@@ -19097,81 +19097,146 @@ def create_auto_post_order():
 
 async def auto_promotion_post_task():
 
-    global auto_post_order
-    global auto_post_index
-
-    print(
-        "📢 Auto promotion post scheduler started"
-    )
+    print("📢 Weekly auto-promotion scheduler started")
 
     while True:
 
-        # -----------------------------------------
-        # CREATE NEW ORDER IF NEEDED
-        # -----------------------------------------
+        try:
 
-        if not auto_post_order:
+            state = load_auto_post_state()
 
-            create_auto_post_order()
+            if state is None:
+                raise RuntimeError(
+                    "No scheduler row found in auto_post_scheduler. "
+                    "Make sure the table contains a row with id = 1."
+                )
 
-        # -----------------------------------------
-        # GET NEXT POST
-        # -----------------------------------------
+            last_post_time, next_post_index, saved_order = state
 
-        post_number = auto_post_order[
-            auto_post_index
-        ]
+            # -----------------------------------------
+            # RESTORE SAVED ORDER
+            # -----------------------------------------
 
-        post = AUTO_POSTS[
-            post_number
-        ]
+            try:
+                auto_post_order = [
+                    int(value)
+                    for value in (saved_order or "").split(",")
+                    if value.strip()
+                ]
+            except (ValueError, AttributeError):
+                auto_post_order = []
 
-        print(
-            f"📢 Sending auto post "
-            f"{post_number + 1} of {len(AUTO_POSTS)}"
-        )
+            # Create an order only if the saved order is invalid.
+            if (
+                len(auto_post_order) != len(AUTO_POSTS)
+                or set(auto_post_order) != set(range(len(AUTO_POSTS)))
+            ):
 
-        # -----------------------------------------
-        # SEND POST
-        # -----------------------------------------
+                auto_post_order = create_auto_post_order()
+                next_post_index = 0
 
-        success = await send_auto_promotion_post(
-            post
-        )
+                save_auto_post_state(
+                    last_post_time,
+                    next_post_index,
+                    auto_post_order
+                )
 
-        # -----------------------------------------
-        # MOVE TO NEXT POST
-        # -----------------------------------------
+            # -----------------------------------------
+            # WAIT FOR THE 7-DAY DEADLINE
+            # -----------------------------------------
 
-        if success:
+            if last_post_time > 0:
 
-            auto_post_index += 1
+                elapsed = time.time() - last_post_time
 
-        # -----------------------------------------
-        # ALL POSTS FINISHED
-        # -----------------------------------------
+                remaining = AUTO_POST_INTERVAL - elapsed
 
-        if auto_post_index >= len(auto_post_order):
+                if remaining > 0:
+
+                    print(
+                        f"⏰ Next promotion post in "
+                        f"{remaining / 86400:.2f} days."
+                    )
+
+                    await asyncio.sleep(remaining)
+                    continue
+
+            # -----------------------------------------
+            # START A NEW CYCLE IF ALL POSTS WERE SENT
+            # -----------------------------------------
+
+            if next_post_index >= len(auto_post_order):
+
+                print(
+                    "✅ All auto-promotion posts have been sent."
+                )
+
+                auto_post_order = create_auto_post_order()
+                next_post_index = 0
+
+                save_auto_post_state(
+                    last_post_time,
+                    next_post_index,
+                    auto_post_order
+                )
+
+            # -----------------------------------------
+            # GET NEXT POST
+            # -----------------------------------------
+
+            post_number = auto_post_order[next_post_index]
+
+            post = AUTO_POSTS[post_number]
 
             print(
-                "✅ All auto promotion posts "
-                "have been sent."
+                f"📢 Sending auto post "
+                f"{post_number + 1} of {len(AUTO_POSTS)}"
             )
 
-            auto_post_order = []
+            # -----------------------------------------
+            # SEND POST
+            # -----------------------------------------
 
-        # -----------------------------------------
-        # WAIT 6 HOURS
-        # -----------------------------------------
+            success = await send_auto_promotion_post(post)
 
-        print(
-            "⏰ Next auto promotion post "
-            "in 6 hours."
-        )
+            if success:
 
-        await asyncio.sleep(
-            AUTO_POST_INTERVAL
-        )
+                last_post_time = time.time()
+                next_post_index += 1
+
+                save_auto_post_state(
+                    last_post_time,
+                    next_post_index,
+                    auto_post_order
+                )
+
+                print(
+                    "✅ Auto post sent successfully. "
+                    "Next post will be due in 7 days."
+                )
+
+                # Wait seven days from this successful post.
+                await asyncio.sleep(AUTO_POST_INTERVAL)
+
+            else:
+
+                print(
+                    "⚠️ Auto post failed. "
+                    "Retrying in 15 minutes."
+                )
+
+                await asyncio.sleep(15 * 60)
+
+        except asyncio.CancelledError:
+            raise
+
+        except Exception as e:
+
+            print(
+                f"❌ Auto promotion scheduler error: {e}"
+            )
+
+            await asyncio.sleep(60)
 
 # =========================================
 # GAMDΟM ACCOUNT CONNECTION
