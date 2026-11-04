@@ -101,6 +101,10 @@ VERIFICATION_REVIEWER_IDS = {
     850665803161534484,  # ham
     878253813553844254,  # tee
 }
+
+TIKTOK_USERNAME = "wildlinesworld"
+TIKTOK_PROFILE_URL = "https://tik.watch/en/@wildlinesworld"
+TIKTOK_CHECK_INTERVAL = 180 
 INSTAGRAM_USERNAME = "wildlinesofficial"
 INSTAGRAM_PROFILE_URL = (
     f"https://www.instagram.com/{INSTAGRAM_USERNAME}/"
@@ -290,6 +294,10 @@ async def on_ready():
     if not instagram_checker.is_running():
         instagram_checker.start()
 
+    if not tiktok_notification_task.is_running():
+        tiktok_notification_task.start()
+        print("🎵 TikTok notification system started")
+        
     if not gamdom_games_sync_task.is_running():
         gamdom_games_sync_task.start()
 
@@ -22215,6 +22223,504 @@ async def verification_session_sync_loop():
 
         await asyncio.sleep(10)
 
+
+async def get_tiktok_videos(page, cursor=None):
+    """
+    Fetch one page of TikTok videos through tik.watch's
+    encrypted gateway API.
+    """
+
+    result = await page.evaluate(
+        """
+        async ({ username, cursor }) => {
+
+            const rawKey = Uint8Array.from(
+                atob(window.__pwk),
+                c => c.charCodeAt(0)
+            );
+
+            const key = await crypto.subtle.importKey(
+                "raw",
+                rawKey,
+                "AES-GCM",
+                false,
+                ["encrypt", "decrypt"]
+            );
+
+            // Create request IV
+            const iv = crypto.getRandomValues(
+                new Uint8Array(12)
+            );
+
+            // Prepare request
+            const requestData = {
+                op: "videos",
+                params: {
+                    username: username,
+                    cursor: cursor
+                }
+            };
+
+            const plaintext = new TextEncoder().encode(
+                JSON.stringify(requestData)
+            );
+
+            const encrypted = await crypto.subtle.encrypt(
+                {
+                    name: "AES-GCM",
+                    iv: iv
+                },
+                key,
+                plaintext
+            );
+
+            // Combine IV + encrypted payload
+            const combined = new Uint8Array(
+                iv.length + encrypted.byteLength
+            );
+
+            combined.set(iv, 0);
+            combined.set(
+                new Uint8Array(encrypted),
+                iv.length
+            );
+
+            const encoded = btoa(
+                String.fromCharCode(...combined)
+            );
+
+            // Send gateway request
+            const response = await fetch(
+                "/api/gateway",
+                {
+                    method: "POST",
+                    headers: {
+                        "content-type": "application/json",
+                        "x-kid": window.__pwkid
+                    },
+                    body: JSON.stringify({
+                        e: 1,
+                        d: encoded
+                    })
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error(
+                    "TikTok gateway HTTP " + response.status
+                );
+            }
+
+            const responseData = await response.json();
+
+            if (!responseData.d) {
+                throw new Error(
+                    "TikTok gateway returned an invalid response"
+                );
+            }
+
+            // Decode encrypted response
+            const encryptedResponse = Uint8Array.from(
+                atob(responseData.d),
+                c => c.charCodeAt(0)
+            );
+
+            const responseIv = encryptedResponse.slice(0, 12);
+            const responseCiphertext = encryptedResponse.slice(12);
+
+            const decrypted = await crypto.subtle.decrypt(
+                {
+                    name: "AES-GCM",
+                    iv: responseIv
+                },
+                key,
+                responseCiphertext
+            );
+
+            return JSON.parse(
+                new TextDecoder().decode(decrypted)
+            );
+        }
+        """,
+        {
+            "username": TIKTOK_USERNAME,
+            "cursor": cursor
+        }
+    )
+
+    return result
+
+
+def get_tiktok_response_data(result):
+    """
+    Normalize the gateway response.
+    """
+
+    data = result.get("data", result)
+
+    if isinstance(data, dict) and isinstance(data.get("data"), dict):
+        data = data["data"]
+
+    videos = (
+        data.get("videos")
+        or data.get("items")
+        or []
+    )
+
+    next_cursor = data.get("nextCursor")
+    has_more = data.get("hasMore", False)
+
+    return videos, next_cursor, has_more
+
+
+async def get_registered_tiktok_ids():
+    """
+    Get video IDs already saved in the main bot database.
+    """
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        cursor = await db.execute(
+            """
+            SELECT video_id
+            FROM tiktok_notifications
+            """
+        )
+
+        rows = await cursor.fetchall()
+
+    return {row[0] for row in rows}
+
+
+async def save_tiktok_video(video):
+    """
+    Save a TikTok video after successful notification,
+    or during the initial silent registration.
+    """
+
+    video_id = str(video.get("id", ""))
+
+    if not video_id:
+        return
+
+    title = video.get("description") or "New WildLines TikTok video"
+
+    video_url = (
+        f"https://www.tiktok.com/@{TIKTOK_USERNAME}/video/{video_id}"
+    )
+
+    create_time = int(video.get("createTime") or 0)
+
+    published_at = (
+        datetime.fromtimestamp(
+            create_time,
+            timezone.utc
+        ).isoformat()
+        if create_time
+        else None
+    )
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        await db.execute(
+            """
+            INSERT OR IGNORE INTO tiktok_notifications
+            (
+                video_id,
+                video_title,
+                video_url,
+                published_at
+            )
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                video_id,
+                title,
+                video_url,
+                published_at
+            )
+        )
+
+        await db.commit()
+
+
+async def send_tiktok_notification(channel, video):
+    """
+    Send a TikTok notification using the same general
+    layout as the WildLines YouTube notification.
+    """
+
+    video_id = str(video.get("id", ""))
+
+    if not video_id:
+        return False
+
+    title = video.get("description") or "New WildLines TikTok video"
+
+    video_url = (
+        f"https://www.tiktok.com/@{TIKTOK_USERNAME}/video/{video_id}"
+    )
+
+    embed = discord.Embed(
+        title="🎵 NEW WILDLINES TIKTOK VIDEO",
+        description=(
+            f"**{title}**\n\n"
+            "WildLines just uploaded a new TikTok video!"
+        ),
+        url=video_url,
+        color=discord.Color.gold()
+    )
+
+    embed.set_author(
+        name="WildLines"
+    )
+
+    cover = video.get("cover")
+
+    if cover and isinstance(cover, str) and cover.startswith("http"):
+        embed.set_image(url=cover)
+
+    embed.add_field(
+        name="▶️ Watch Now",
+        value=f"[Click here to watch the TikTok]({video_url})",
+        inline=False
+    )
+
+    create_time = int(video.get("createTime") or 0)
+
+    if create_time:
+        embed.add_field(
+            name="📅 Published",
+            value=(
+                f"<t:{create_time}:F>\n"
+                f"(<t:{create_time}:R>)"
+            ),
+            inline=False
+        )
+
+    embed.set_footer(
+        text="WildLinesWorld • TikTok"
+    )
+
+    try:
+        await channel.send(embed=embed)
+
+        # Save only after Discord successfully sends it.
+        await save_tiktok_video(video)
+
+        print(
+            f"✅ TikTok notification sent: {video_id}"
+        )
+
+        return True
+
+    except Exception as e:
+
+        print(
+            f"❌ TikTok Discord notification failed: {e}"
+        )
+
+        return False
+
+
+async def fetch_tiktok_video_pages(page, registered_ids):
+    """
+    Fetch newest videos and continue through older pages
+    until an already registered video is encountered.
+
+    If the database is empty, fetch all available pages
+    for the initial silent registration.
+    """
+
+    all_new_videos = []
+    cursor = None
+    first_run = len(registered_ids) == 0
+
+    while True:
+
+        print(
+            f"🔎 Fetching TikTok videos page "
+            f"{len(all_new_videos) // 10 + 1}..."
+        )
+
+        result = await get_tiktok_videos(
+            page,
+            cursor
+        )
+
+        videos, next_cursor, has_more = get_tiktok_response_data(
+            result
+        )
+
+        if not videos:
+            break
+
+        found_existing = False
+
+        for video in videos:
+
+            video_id = str(video.get("id", ""))
+
+            if not video_id:
+                continue
+
+            if video_id in registered_ids:
+                found_existing = True
+                continue
+
+            all_new_videos.append(video)
+
+        print(
+            f"   Retrieved {len(videos)} videos."
+        )
+
+        # On normal checks, stop after reaching a page
+        # containing previously registered videos.
+        if not first_run and found_existing:
+            break
+
+        if not has_more or not next_cursor:
+            break
+
+        if next_cursor == cursor:
+            break
+
+        cursor = next_cursor
+
+        # Avoid making gateway requests too quickly.
+        await asyncio.sleep(1)
+
+    return all_new_videos
+
+
+@tasks.loop(minutes=TIKTOK_CHECK_INTERVAL)
+async def tiktok_notification_task():
+
+    print("\n🔄 Checking WildLines TikTok...")
+
+    try:
+
+        # Read existing video IDs from the main database.
+        registered_ids = await get_registered_tiktok_ids()
+
+        # Launch a fresh browser for this check.
+        async with async_playwright() as p:
+
+            browser = await p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox"]
+            )
+
+            page = await browser.new_page()
+
+            try:
+
+                await page.goto(
+                    TIKTOK_PROFILE_URL,
+                    wait_until="domcontentloaded",
+                    timeout=60000
+                )
+
+                # Wait for the gateway encryption credentials.
+                print("⏳ Waiting for Tik.watch verification...")
+
+                try:
+
+                    await page.wait_for_function(
+                        "() => window.__pwk && window.__pwkid",
+                        timeout=180000
+                    )
+
+                    print("✅ Tik.watch credentials loaded.")
+
+                except Exception:
+
+                    print("❌ Tik.watch credentials still unavailable after 3 minutes.")
+                    print("Current URL:", page.url)
+                    print("Page title:", await page.title())
+
+                    raise
+
+                print("✅ Tik.watch credentials loaded.")
+
+                new_videos = await fetch_tiktok_video_pages(
+                    page,
+                    registered_ids
+                )
+
+            finally:
+
+                await browser.close()
+
+        # -----------------------------------------
+        # FIRST RUN: REGISTER EXISTING VIDEOS
+        # -----------------------------------------
+
+        if not registered_ids:
+
+            print(
+                "🆕 FIRST RUN: Registering existing TikTok videos."
+            )
+
+            for video in new_videos:
+                await save_tiktok_video(video)
+
+            print(
+                f"✅ Registered {len(new_videos)} existing TikTok videos."
+            )
+
+            print(
+                "No notifications sent for existing uploads."
+            )
+
+            return
+
+        # -----------------------------------------
+        # SEND NEW VIDEO NOTIFICATIONS
+        # -----------------------------------------
+
+        if not new_videos:
+
+            print("No new TikTok videos found.")
+            return
+
+        # Send oldest first so multiple uploads appear
+        # in chronological order in Discord.
+        new_videos.sort(
+            key=lambda video: int(video.get("createTime") or 0)
+        )
+
+        channel = bot.get_channel(
+            int(YOUTUBE_DISCORD_CHANNEL_ID)
+        )
+
+        if channel is None:
+            channel = await bot.fetch_channel(
+                int(YOUTUBE_DISCORD_CHANNEL_ID)
+            )
+
+        for video in new_videos:
+
+            await send_tiktok_notification(
+                channel,
+                video
+            )
+
+        print(
+            f"✅ TikTok check complete. "
+            f"{len(new_videos)} new video(s) found."
+        )
+
+    except Exception as e:
+
+        print(
+            f"❌ TikTok notification checker error: {e}"
+        )
+
+
+@tiktok_notification_task.before_loop
+async def before_tiktok_notification_task():
+    await bot.wait_until_ready()
 
 if __name__ == "__main__":
     bot.run(TOKEN)
