@@ -3314,7 +3314,7 @@ async def check_stream():
             embed = discord.Embed(
                 title=f"LIVE NOW! Come watch {KICK_USERNAME} on Kick!",
                 description=f"**{title}**",
-                color=discord.Color.red(),
+                color=discord.Color.from_rgb(83, 252, 24),
                 url=f"https://kick.com/{KICK_USERNAME}"
             )
 
@@ -3353,7 +3353,7 @@ async def check_stream():
                     f"• ⏱ Duration: **{minutes}m {seconds}s**\n"
                     f"• 👀 Peak Viewers: **{peak_viewers}**"
                 ),
-                color=discord.Color.from_rgb(83, 252, 24),
+                color=discord.Color.from_rgb(139, 0, 0),
                 url=f"https://kick.com/{KICK_USERNAME}"
             )
 
