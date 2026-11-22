@@ -114,8 +114,11 @@ INSTAGRAM_CHECK_MINUTES = 180
 INSTAGRAM_MAX_POSTS = 5
 
 X_USERNAME = "WildLinesX"
-YOUTUBE_CHANNEL_ID = "UC5K520DcXsQ6WEY7gZgTbPg"
-YOUTUBE_DISCORD_CHANNEL_ID = 1176520510515970054
+YOUTUBE_CHANNELS = {
+    "WildLinesOfficial": "UC5K520DcXsQ6WEY7gZgTbPg",
+    "WildLinesWorld": "UC4TUt8KwvmTlGiV6RFVvtLw"
+}
+YOUTUBE_DISCORD_CHANNEL_ID = 1304480656893546536
 X_DISCORD_CHANNEL_ID = 1176520510515970054
 
 LEAVE_LOG_CHANNEL_ID = 1545441471774195782
@@ -3350,7 +3353,7 @@ async def check_stream():
                     f"• ⏱ Duration: **{minutes}m {seconds}s**\n"
                     f"• 👀 Peak Viewers: **{peak_viewers}**"
                 ),
-                color=discord.Color.dark_grey(),
+                color=discord.Color.from_rgb(83, 252, 24),
                 url=f"https://kick.com/{KICK_USERNAME}"
             )
 
@@ -13842,13 +13845,9 @@ async def treasure_hunt(
     )
 
 
+
 @tasks.loop(minutes=30)
 async def youtube_notification_task():
-
-    feed_url = (
-        "https://www.youtube.com/feeds/videos.xml"
-        f"?channel_id={YOUTUBE_CHANNEL_ID}"
-    )
 
     headers = {
         "User-Agent": (
@@ -13865,272 +13864,327 @@ async def youtube_notification_task():
 
     try:
 
-        timeout = aiohttp.ClientTimeout(
-            total=30
-        )
+        timeout = aiohttp.ClientTimeout(total=30)
 
         async with aiohttp.ClientSession(
             headers=headers,
             timeout=timeout
         ) as session:
 
-            xml_data = None
-
             # -----------------------------------------
-            # TRY UP TO 3 TIMES
+            # DISCORD CHANNEL
             # -----------------------------------------
 
-            for attempt in range(1, 4):
+            channel = bot.get_channel(
+                YOUTUBE_DISCORD_CHANNEL_ID
+            )
+
+            if channel is None:
+
+                print("❌ YouTube Discord channel not found.")
+                return
+
+            # -----------------------------------------
+            # CHECK BOTH YOUTUBE CHANNELS
+            # -----------------------------------------
+
+            for channel_name, youtube_channel_id in YOUTUBE_CHANNELS.items():
+
+                print(
+                    f"🔄 Checking YouTube: {channel_name}"
+                )
+
+                feed_url = (
+                    "https://www.youtube.com/feeds/videos.xml"
+                    f"?channel_id={youtube_channel_id}"
+                )
 
                 try:
 
-                    async with session.get(
-                        feed_url
-                    ) as response:
+                    xml_data = None
 
-                        if response.status == 200:
+                    # -----------------------------------------
+                    # TRY UP TO 3 TIMES
+                    # -----------------------------------------
 
-                            xml_data = await response.text()
+                    for attempt in range(1, 4):
 
-                            break
+                        try:
+
+                            async with session.get(
+                                feed_url
+                            ) as response:
+
+                                if response.status == 200:
+
+                                    xml_data = await response.text()
+                                    break
+
+                                print(
+                                    f"⚠️ YouTube feed attempt "
+                                    f"{attempt}/3 returned HTTP "
+                                    f"{response.status} "
+                                    f"for {channel_name}"
+                                )
+
+                        except Exception as e:
+
+                            print(
+                                f"⚠️ YouTube feed attempt "
+                                f"{attempt}/3 failed "
+                                f"for {channel_name}: {e}"
+                            )
+
+                        if attempt < 3:
+
+                            await asyncio.sleep(5)
+
+                    if xml_data is None:
 
                         print(
-                            f"⚠️ YouTube feed attempt "
-                            f"{attempt}/3 returned HTTP "
-                            f"{response.status}"
+                            f"❌ YouTube feed unavailable "
+                            f"for {channel_name} after 3 attempts."
                         )
+
+                        continue
+
+                    # -----------------------------------------
+                    # PARSE XML
+                    # -----------------------------------------
+
+                    root = ET.fromstring(xml_data)
+
+                    namespace = {
+                        "atom": "http://www.w3.org/2005/Atom",
+                        "yt": "http://www.youtube.com/xml/schemas/2015"
+                    }
+
+                    entry = root.find(
+                        "atom:entry",
+                        namespace
+                    )
+
+                    if entry is None:
+
+                        print(
+                            f"⚠️ No YouTube videos found "
+                            f"for {channel_name}."
+                        )
+
+                        continue
+
+                    video_id_element = entry.find(
+                        "yt:videoId",
+                        namespace
+                    )
+
+                    title_element = entry.find(
+                        "atom:title",
+                        namespace
+                    )
+
+                    published_element = entry.find(
+                        "atom:published",
+                        namespace
+                    )
+
+                    if video_id_element is None:
+
+                        print(
+                            f"⚠️ No video ID found for {channel_name}."
+                        )
+
+                        continue
+
+                    video_id = video_id_element.text
+
+                    title = (
+                        title_element.text
+                        if title_element is not None
+                        else "Unknown Title"
+                    )
+
+                    published = (
+                        published_element.text
+                        if published_element is not None
+                        else None
+                    )
+
+                    video_url = (
+                        f"https://www.youtube.com/watch?v={video_id}"
+                    )
+
+                    thumbnail_url = (
+                        f"https://i.ytimg.com/vi/"
+                        f"{video_id}/maxresdefault.jpg"
+                    )
+
+                    # -----------------------------------------
+                    # CHECK IF ALREADY POSTED
+                    # -----------------------------------------
+
+                    async with aiosqlite.connect(DB_PATH) as db:
+
+                        cursor = await db.execute(
+                            """
+                            SELECT 1
+                            FROM youtube_notifications
+                            WHERE video_id = ?
+                            LIMIT 1
+                            """,
+                            (video_id,)
+                        )
+
+                        existing = await cursor.fetchone()
+
+                    if existing:
+
+                        print(
+                            f"⏭️ Already notified: {title}"
+                        )
+
+                        continue
+
+                    # -----------------------------------------
+                    # CREATE EMBED
+                    # -----------------------------------------
+
+                    embed = discord.Embed(
+                        title="🎬 NEW WILDLINES YOUTUBE VIDEO",
+                        description=(
+                            f"**{title}**\n\n"
+                            f"{channel_name} just uploaded "
+                            f"a new video!"
+                        ),
+                        url=video_url,
+                        color=discord.Color.from_rgb(255, 0, 0)
+                    )
+
+                    embed.set_author(
+                        name="WildLines"
+                    )
+
+                    # LARGE THUMBNAIL
+
+                    embed.set_image(
+                        url=thumbnail_url
+                    )
+
+                    # -----------------------------------------
+                    # PUBLISHED TIME
+                    # -----------------------------------------
+
+                    if published:
+
+                        try:
+
+                            published_dt = datetime.fromisoformat(
+                                published.replace("Z", "+00:00")
+                            )
+
+                            discord_timestamp = int(
+                                published_dt.timestamp()
+                            )
+
+                            embed.add_field(
+                                name="📅 Published",
+                                value=(
+                                    f"<t:{discord_timestamp}:F>\n"
+                                    f"(<t:{discord_timestamp}:R>)"
+                                ),
+                                inline=False
+                            )
+
+                        except Exception as e:
+
+                            print(
+                                f"⚠️ Published date error: {e}"
+                            )
+
+                    # -----------------------------------------
+                    # FOOTER
+                    # -----------------------------------------
+
+                    embed.set_footer(
+                        text=f"{channel_name} • YouTube"
+                    )
+
+                    # -----------------------------------------
+                    # YOUTUBE LINK BUTTON
+                    # -----------------------------------------
+
+                    view = discord.ui.View(
+                        timeout=None
+                    )
+
+                    view.add_item(
+                        discord.ui.Button(
+                            label="Watch on YouTube",
+                            style=discord.ButtonStyle.link,
+                            url=video_url,
+                            emoji="▶️"
+                        )
+                    )
+
+                    # -----------------------------------------
+                    # SEND NOTIFICATION
+                    # -----------------------------------------
+
+                    await channel.send(
+                        embed=embed,
+                        view=view
+                    )
+
+                    # -----------------------------------------
+                    # SAVE VIDEO
+                    # -----------------------------------------
+
+                    async with aiosqlite.connect(DB_PATH) as db:
+
+                        await db.execute(
+                            """
+                            INSERT OR IGNORE INTO youtube_notifications
+                            (
+                                video_id,
+                                video_title,
+                                video_url,
+                                published_at
+                            )
+                            VALUES (?, ?, ?, ?)
+                            """,
+                            (
+                                video_id,
+                                title,
+                                video_url,
+                                published
+                            )
+                        )
+
+                        await db.commit()
+
+                    print(
+                        f"📺 YouTube notification sent "
+                        f"({channel_name}): {title}"
+                    )
 
                 except Exception as e:
 
                     print(
-                        f"⚠️ YouTube feed attempt "
-                        f"{attempt}/3 failed: {e}"
+                        f"❌ YouTube notification error "
+                        f"({channel_name}): {e}"
                     )
-
-                if attempt < 3:
-
-                    await asyncio.sleep(5)
-
-            if xml_data is None:
-
-                print(
-                    "❌ YouTube feed unavailable after "
-                    "3 attempts."
-                )
-
-                return
-
-        # -----------------------------------------
-        # PARSE XML
-        # -----------------------------------------
-
-        root = ET.fromstring(xml_data)
-
-        namespace = {
-            "atom": "http://www.w3.org/2005/Atom",
-            "yt": "http://www.youtube.com/xml/schemas/2015"
-        }
-
-        entry = root.find(
-            "atom:entry",
-            namespace
-        )
-
-        if entry is None:
-
-            print(
-                "⚠️ YouTube feed contains no entries."
-            )
-
-            return
-
-        video_id_element = entry.find(
-            "yt:videoId",
-            namespace
-        )
-
-        title_element = entry.find(
-            "atom:title",
-            namespace
-        )
-
-        published_element = entry.find(
-            "atom:published",
-            namespace
-        )
-
-        if video_id_element is None:
-
-            print(
-                "⚠️ YouTube entry has no video ID."
-            )
-
-            return
-
-        video_id = video_id_element.text
-
-        title = (
-            title_element.text
-            if title_element is not None
-            else "Unknown Title"
-        )
-
-        published = (
-            published_element.text
-            if published_element is not None
-            else None
-        )
-
-        video_url = (
-            f"https://www.youtube.com/watch?v={video_id}"
-        )
-
-        thumbnail_url = (
-            f"https://i.ytimg.com/vi/"
-            f"{video_id}/maxresdefault.jpg"
-        )
-
-        # -----------------------------------------
-        # CHECK IF ALREADY POSTED
-        # -----------------------------------------
-
-        async with aiosqlite.connect(DB_PATH) as db:
-
-            cursor = await db.execute(
-                """
-                SELECT 1
-                FROM youtube_notifications
-                WHERE video_id = ?
-                LIMIT 1
-                """,
-                (video_id,)
-            )
-
-            existing = await cursor.fetchone()
-
-        if existing:
-
-            return
-
-        # -----------------------------------------
-        # DISCORD CHANNEL
-        # -----------------------------------------
-
-        channel = bot.get_channel(
-            YOUTUBE_DISCORD_CHANNEL_ID
-        )
-
-        if channel is None:
-
-            print(
-                "❌ YouTube Discord channel not found."
-            )
-
-            return
-
-        # -----------------------------------------
-        # CREATE EMBED
-        # -----------------------------------------
-
-        embed = discord.Embed(
-            title="🎬 NEW WILDLINES YOUTUBE VIDEO",
-            description=(
-                f"**{title}**\n\n"
-                "WildLinesOfficial just uploaded "
-                "a new video!"
-            ),
-            url=video_url
-        )
-
-        embed.set_author(
-            name="WildLines"
-        )
-
-        # LARGE THUMBNAIL
-
-        embed.set_image(
-            url=thumbnail_url
-        )
-
-        embed.add_field(
-            name="▶️ Watch Now",
-            value=(
-                f"[YouTube Video]({video_url})"
-            ),
-            inline=False
-        )
-
-        # -----------------------------------------
-        # LOCALIZED DISCORD TIME
-        # -----------------------------------------
-
-        if published:
-
-            published_dt = datetime.fromisoformat(
-                published.replace("Z", "+00:00")
-            )
-
-            discord_timestamp = int(
-                published_dt.timestamp()
-            )
-
-            embed.add_field(
-                name="📅 Published",
-                value=(
-                    f"<t:{discord_timestamp}:F>\n"
-                    f"(<t:{discord_timestamp}:R>)"
-                ),
-                inline=False
-            )
-
-        embed.set_footer(
-            text="WildLinesOfficial • YouTube"
-        )
-
-        # -----------------------------------------
-        # SEND
-        # -----------------------------------------
-
-        await channel.send(
-            embed=embed
-        )
-
-        # -----------------------------------------
-        # SAVE VIDEO
-        # -----------------------------------------
-
-        async with aiosqlite.connect(DB_PATH) as db:
-
-            await db.execute(
-                """
-                INSERT OR IGNORE INTO youtube_notifications
-                (
-                    video_id,
-                    video_title,
-                    video_url,
-                    published_at
-                )
-                VALUES (?, ?, ?, ?)
-                """,
-                (
-                    video_id,
-                    title,
-                    video_url,
-                    published
-                )
-            )
-
-            await db.commit()
-
-        print(
-            f"📺 YouTube notification sent: {title}"
-        )
 
     except Exception as e:
 
         print(
-            f"❌ YouTube notification error: {e}"
+            f"❌ YouTube notification system error: {e}"
         )
+
+
+@youtube_notification_task.before_loop
+async def before_youtube_notification_task():
+
+    await bot.wait_until_ready()
 
 @tasks.loop(minutes=30)
 async def x_notification_task():
@@ -14414,7 +14468,7 @@ async def send_x_notification(post):
             title="🐦 NEW WILDLINES X POST",
             description=f"**{text}**",
             url=post_url,
-            color=discord.Color.blue()
+            color=discord.Color.from_rgb(0, 0, 0)
         )
 
         embed.set_author(
@@ -14487,15 +14541,20 @@ async def send_x_notification(post):
             )
 
         # -----------------------------------------
-        # VIEW ON X
+        # X LINK BUTTON
         # -----------------------------------------
 
-        embed.add_field(
-            name="🔗 View on X",
-            value=(
-                f"[Open X Post]({post_url})"
-            ),
-            inline=False
+        view = discord.ui.View(
+            timeout=None
+        )
+
+        view.add_item(
+            discord.ui.Button(
+                label="View on X",
+                style=discord.ButtonStyle.link,
+                url=post_url,
+                emoji="𝕏"
+            )
         )
 
         # -----------------------------------------
@@ -14539,7 +14598,8 @@ async def send_x_notification(post):
         # -----------------------------------------
 
         await channel.send(
-            embed=embed
+            embed=embed,
+            view=view
         )
 
         # -----------------------------------------
