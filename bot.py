@@ -14649,9 +14649,31 @@ async def send_x_notification(post, username):
     except Exception as e:
 
         print(
+
             f"❌ X notification send error: {e}"
+
         )
 
+        if isinstance(e, discord.HTTPException):
+            print(
+
+                f"❌ Discord status: {e.status}"
+
+            )
+
+            print(
+
+                f"❌ Discord error code: {e.code}"
+
+            )
+
+            print(
+
+                f"❌ Discord response details: {e.text}"
+
+            )
+
+        return False
 
 
 @bot.tree.command(
