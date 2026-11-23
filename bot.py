@@ -22528,7 +22528,7 @@ async def send_tiktok_notification(channel, video):
             "WildLines just uploaded a new TikTok video!"
         ),
         url=video_url,
-        color=discord.Color.gold()
+        color=discord.Color.from_rgb(0, 0, 0)
     )
 
     embed.set_author(
@@ -22540,10 +22540,16 @@ async def send_tiktok_notification(channel, video):
     if cover and isinstance(cover, str) and cover.startswith("http"):
         embed.set_image(url=cover)
 
-    embed.add_field(
-        name="▶️ Watch Now",
-        value=f"[Click here to watch the TikTok]({video_url})",
-        inline=False
+    # TikTok watch button
+    view = discord.ui.View(timeout=None)
+
+    view.add_item(
+        discord.ui.Button(
+            label="Watch on TikTok",
+            style=discord.ButtonStyle.link,
+            url=video_url,
+            emoji="🎵"
+        )
     )
 
     create_time = int(video.get("createTime") or 0)
@@ -22563,7 +22569,10 @@ async def send_tiktok_notification(channel, video):
     )
 
     try:
-        await channel.send(embed=embed)
+        await channel.send(
+            embed=embed,
+            view=view
+        )
 
         # Save only after Discord successfully sends it.
         await save_tiktok_video(video)
