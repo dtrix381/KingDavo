@@ -14564,7 +14564,7 @@ async def send_x_notification(post, username):
                 label="View on X",
                 style=discord.ButtonStyle.link,
                 url=post_url,
-                emoji="𝕏"
+                emoji="🐦"
             )
         )
 
