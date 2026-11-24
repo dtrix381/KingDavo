@@ -88,6 +88,25 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 JOIN_EMOJI = "🎰"
 manual_games = {}  # Stores {channel_id: (players, provider_name)}
 invite_cache = {}
+EXCLUSIVE_GIVEAWAY_INVITE = "YwhFyR7HkK"
+EXCLUSIVE_GIVEAWAY_ROLE_ID = 1574640001835208814
+GAMDOM_ACCOUNT_ROLE_ID = 1222265292747444256
+GIVEAWAY_OWNER_ID = 488015447417946151
+gamdom_connect_view_registered = False
+
+# ==========================================
+# X CREATOR GIVEAWAY SETTINGS
+# ==========================================
+
+X_CREATOR_GIVEAWAY_CATEGORY_ID = 1534121288162087004
+
+X_CREATOR_GIVEAWAY_WINNER_COUNT = 10
+
+X_CREATOR_GIVEAWAY_PRIZE_AMOUNT = 20
+
+X_CREATOR_GIVEAWAY_TOTAL_PRIZE = 200
+
+X_CREATOR_GIVEAWAY_TITLE = "💎 VERIFIED X CREATORS EXCLUSIVE GIVEAWAY"
 
 WILDLINES_ROLE_ID = 1176520509878439997
 VERIFICATION_LOG_CHANNEL_ID = 1534120644252536852
@@ -231,6 +250,7 @@ async def on_ready():
 
     global http_session
     global gamdom_ws_task
+    global gamdom_connect_view_registered
 
     print(f"✅ Logged in as {bot.user}")
 
@@ -265,6 +285,13 @@ async def on_ready():
 
     if streamers:
         bot.add_view(StreamerRoleView(streamers))
+
+    if not gamdom_connect_view_registered:
+        bot.add_view(GamdomConnectView())
+
+        gamdom_connect_view_registered = True
+
+        print("🎰 Gamdom Connect persistent view loaded.")
 
     # -----------------------------------------
     # KICK SYSTEM
@@ -344,6 +371,43 @@ async def on_ready():
     await setup_tag_database()
     await setup_giveaway_database()
 
+    # -----------------------------------------
+    # X CREATOR GIVEAWAY PERSISTENT VIEWS
+    # -----------------------------------------
+
+    if not getattr(
+        bot,
+        "_x_creator_giveaway_views_registered",
+        False
+    ):
+
+        try:
+
+            saved_giveaways = get_x_creator_giveaways_for_restore()
+
+            restored_count = 0
+
+            for giveaway_id, message_id in saved_giveaways:
+
+                bot.add_view(
+                    XCreatorGiveawayView(giveaway_id),
+                    message_id=message_id
+                )
+
+                restored_count += 1
+
+            bot._x_creator_giveaway_views_registered = True
+
+            print(
+                f"💎 X Creator Giveaway views restored: "
+                f"{restored_count}"
+            )
+
+        except Exception as e:
+
+            print(
+                f"❌ X Creator Giveaway view restoration error: {e}"
+            )
     active_giveaway = await get_active_giveaway()
 
     if active_giveaway:
@@ -563,7 +627,6 @@ async def find_used_invite(guild):
 
     return None
 
-
 # =========================================
 # INVITE REFERRAL TRACKING
 # =========================================
@@ -575,162 +638,211 @@ async def process_invite_join(member):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    invite = await find_used_invite(guild)
+    try:
 
-    if invite is None:
+        invite = await find_used_invite(guild)
 
-        print(
-            f"🔗 Could not determine invite used by {member}"
-        )
+        if invite is None:
 
-        return
+            print(
+                f"🔗 Could not determine invite used by {member}"
+            )
 
-    invite_code = invite.code
+            return
 
-    # -----------------------------------------
-    # FIND OWNER OF OUR PERSONAL INVITE
-    # -----------------------------------------
+        invite_code = invite.code
 
-    cursor.execute("""
-        SELECT member_id
-        FROM invite_links
-        WHERE guild_id = ?
-        AND invite_code = ?
-    """, (
-        guild.id,
-        invite_code
-    ))
+        # -----------------------------------------
+        # EXCLUSIVE GIVEAWAY INVITE ROLE
+        # -----------------------------------------
 
-    row = cursor.fetchone()
+        if invite_code == EXCLUSIVE_GIVEAWAY_INVITE:
 
-    if row is None:
+            giveaway_role = guild.get_role(
+                EXCLUSIVE_GIVEAWAY_ROLE_ID
+            )
 
-        print(
-            f"🔗 Invite {invite_code} is not one of our "
-            f"personal referral invites."
-        )
+            if giveaway_role is None:
 
-        return
+                print(
+                    "❌ Exclusive giveaway role not found."
+                )
 
-    inviter_id = row[0]
+            elif giveaway_role not in member.roles:
 
-    # -----------------------------------------
-    # DETERMINE REJOIN
-    # -----------------------------------------
+                try:
 
-    cursor.execute("""
-        SELECT COUNT(*)
-        FROM invite_referrals
-        WHERE guild_id = ?
-        AND member_id = ?
-    """, (
-        guild.id,
-        member.id
-    ))
+                    await member.add_roles(
+                        giveaway_role,
+                        reason="Joined using exclusive giveaway invite"
+                    )
 
-    join_count = cursor.fetchone()[0]
+                    print(
+                        f"🎁 Assigned exclusive giveaway role to {member}"
+                    )
 
-    is_rejoin = join_count > 0
+                except discord.Forbidden:
 
-    # -----------------------------------------
-    # SAVE JOIN
-    # -----------------------------------------
+                    print(
+                        "❌ Cannot assign exclusive giveaway role. "
+                        "Check bot role hierarchy and permissions."
+                    )
 
-    cursor.execute("""
-        INSERT INTO invite_referrals (
-            guild_id,
-            member_id,
+                except Exception as e:
+
+                    print(
+                        f"❌ Giveaway role assignment error: {e}"
+                    )
+
+        # -----------------------------------------
+        # FIND OWNER OF OUR PERSONAL INVITE
+        # -----------------------------------------
+
+        cursor.execute("""
+            SELECT member_id
+            FROM invite_links
+            WHERE guild_id = ?
+            AND invite_code = ?
+        """, (
+            guild.id,
+            invite_code
+        ))
+
+        row = cursor.fetchone()
+
+        if row is None:
+
+            print(
+                f"🔗 Invite {invite_code} is not one of our "
+                f"personal referral invites."
+            )
+
+            return
+
+        inviter_id = row[0]
+
+        # -----------------------------------------
+        # DETERMINE REJOIN
+        # -----------------------------------------
+
+        cursor.execute("""
+            SELECT COUNT(*)
+            FROM invite_referrals
+            WHERE guild_id = ?
+            AND member_id = ?
+        """, (
+            guild.id,
+            member.id
+        ))
+
+        join_count = cursor.fetchone()[0]
+
+        is_rejoin = join_count > 0
+
+        # -----------------------------------------
+        # SAVE JOIN
+        # -----------------------------------------
+
+        cursor.execute("""
+            INSERT INTO invite_referrals (
+                guild_id,
+                member_id,
+                inviter_id,
+                invite_code,
+                joined_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+        """, (
+            guild.id,
+            member.id,
             inviter_id,
             invite_code,
-            joined_at
-        )
-        VALUES (?, ?, ?, ?, ?)
-    """, (
-        guild.id,
-        member.id,
-        inviter_id,
-        invite_code,
-        discord.utils.utcnow().isoformat()
-    ))
+            discord.utils.utcnow().isoformat()
+        ))
 
-    conn.commit()
+        conn.commit()
 
-    # -----------------------------------------
-    # GET WELCOME CHANNEL
-    # -----------------------------------------
+        # -----------------------------------------
+        # GET WELCOME CHANNEL
+        # -----------------------------------------
 
-    welcome_channel = guild.get_channel(
-        WELCOME_CHANNEL_ID
-    )
-
-    if welcome_channel is None:
-
-        print(
-            "❌ WELCOME_CHANNEL_ID channel not found."
+        welcome_channel = guild.get_channel(
+            WELCOME_CHANNEL_ID
         )
 
-        return
+        if welcome_channel is None:
 
-    inviter = guild.get_member(
-        inviter_id
-    )
-
-    # -----------------------------------------
-    # BUILD MESSAGE
-    # -----------------------------------------
-
-    if inviter:
-
-        if is_rejoin:
-
-            title = "🔄 Welcome Back!"
-
-            description = (
-                f"Welcome back {member.mention}!\n\n"
-                f"You joined again using "
-                f"{inviter.mention}'s invite link! 🔗"
+            print(
+                "❌ WELCOME_CHANNEL_ID channel not found."
             )
+
+            return
+
+        inviter = guild.get_member(
+            inviter_id
+        )
+
+        # -----------------------------------------
+        # BUILD MESSAGE
+        # -----------------------------------------
+
+        if inviter:
+
+            if is_rejoin:
+
+                title = "🔄 Welcome Back!"
+
+                description = (
+                    f"Welcome back {member.mention}!\n\n"
+                    f"You joined again using "
+                    f"{inviter.mention}'s invite link! 🔗"
+                )
+
+            else:
+
+                title = "🎉 New Member!"
+
+                description = (
+                    f"Welcome {member.mention}!\n\n"
+                    f"You joined using "
+                    f"{inviter.mention}'s invite link! 🔗"
+                )
 
         else:
 
-            title = "🎉 New Member!"
+            title = (
+                "🔄 Welcome Back!"
+                if is_rejoin
+                else "🎉 New Member!"
+            )
 
             description = (
                 f"Welcome {member.mention}!\n\n"
-                f"You joined using "
-                f"{inviter.mention}'s invite link! 🔗"
+                f"Invite referral recorded."
             )
 
-    else:
-
-        title = (
-            "🔄 Welcome Back!"
-            if is_rejoin
-            else "🎉 New Member!"
+        embed = discord.Embed(
+            title=title,
+            description=description,
+            color=discord.Color.green()
         )
 
-        description = (
-            f"Welcome {member.mention}!\n\n"
-            f"Invite referral recorded."
+        embed.set_thumbnail(
+            url=member.display_avatar.url
         )
 
-    embed = discord.Embed(
-        title=title,
-        description=description,
-        color=discord.Color.green()
-    )
+        embed.set_footer(
+            text=f"Invite code: {invite_code}"
+        )
 
-    embed.set_thumbnail(
-        url=member.display_avatar.url
-    )
+        await welcome_channel.send(
+            embed=embed
+        )
 
-    embed.set_footer(
-        text=f"Invite code: {invite_code}"
-    )
+    finally:
 
-    await welcome_channel.send(
-        embed=embed
-    )
+        conn.close()
+
     
 async def get_all_phrases(provider):
     phrases = {}
@@ -19343,58 +19455,8 @@ async def auto_promotion_post_task():
             await asyncio.sleep(60)
 
 # =========================================
-# GAMDΟM ACCOUNT CONNECTION
+# GAMDΟM ACCOUNT CONNECTION MODAL
 # =========================================
-
-class GamdomConnectModal(discord.ui.Modal, title="Connect Your Gamdom Account"):
-
-    gamdom_username = discord.ui.TextInput(
-        label="Gamdom Username",
-        placeholder="Enter your Gamdom username",
-        required=True,
-        max_length=100
-    )
-
-    gamdom_id = discord.ui.TextInput(
-        label="Gamdom ID",
-        placeholder="Enter your Gamdom ID",
-        required=True,
-        max_length=100
-    )
-
-    async def on_submit(self, interaction: discord.Interaction):
-
-        await interaction.response.send_message(
-            "⏳ Checking your Gamdom account information...",
-            ephemeral=True
-        )
-
-        # We will add the database checking here in the next step.
-
-
-class GamdomConnectView(discord.ui.View):
-
-    def __init__(self):
-
-        super().__init__(
-            timeout=None
-        )
-
-    @discord.ui.button(
-        label="Connect Gamdom Account",
-        style=discord.ButtonStyle.green,
-        emoji="🎰",
-        custom_id="gamdom_connect_account"
-    )
-    async def connect_gamdom(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button
-    ):
-
-        await interaction.response.send_modal(
-            GamdomConnectModal()
-        )
 
 class GamdomConnectModal(
     discord.ui.Modal,
@@ -19423,8 +19485,24 @@ class GamdomConnectModal(
         guild = interaction.guild
         user = interaction.user
 
+        if guild is None:
+
+            await interaction.response.send_message(
+                "❌ This feature can only be used inside the server.",
+                ephemeral=True
+            )
+            return
+
         username = self.gamdom_username.value.strip()
         gamdom_id = self.gamdom_id.value.strip()
+
+        if not username or not gamdom_id:
+
+            await interaction.response.send_message(
+                "❌ Please enter both your Gamdom username and Gamdom ID.",
+                ephemeral=True
+            )
+            return
 
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
@@ -19453,7 +19531,7 @@ class GamdomConnectModal(
             existing = cursor.fetchone()
 
             # -----------------------------------------
-            # 24 HOUR COOLDOWN
+            # CHECK 24 HOUR COOLDOWN
             # -----------------------------------------
 
             if existing:
@@ -19464,29 +19542,79 @@ class GamdomConnectModal(
 
                 now = discord.utils.utcnow()
 
+                # Handle older timestamps without timezone data
+                if updated_at.tzinfo is None:
+
+                    updated_at = updated_at.replace(
+                        tzinfo=now.tzinfo
+                    )
+
                 elapsed = now - updated_at
 
                 if elapsed < timedelta(hours=24):
 
-                    remaining = timedelta(hours=24) - elapsed
+                    # Existing saved account can receive
+                    # the connection role if it is missing.
+                    gamdom_role = guild.get_role(
+                        GAMDOM_ACCOUNT_ROLE_ID
+                    )
+
+                    role_warning = ""
+
+                    if gamdom_role is None:
+
+                        role_warning = (
+                            "\n\n⚠️ Your account is saved, but "
+                            "the Gamdom role could not be found. "
+                            "Please contact staff."
+                        )
+
+                    elif gamdom_role not in user.roles:
+
+                        try:
+
+                            await user.add_roles(
+                                gamdom_role,
+                                reason="Existing connected Gamdom account"
+                            )
+
+                        except discord.Forbidden:
+
+                            role_warning = (
+                                "\n\n⚠️ Your account is saved, but "
+                                "I couldn't assign your Gamdom role. "
+                                "Please contact staff."
+                            )
+
+                        except Exception as e:
+
+                            print(
+                                f"❌ Gamdom role assignment error: {e}"
+                            )
+
+                            role_warning = (
+                                "\n\n⚠️ Your account is saved, but "
+                                "there was a problem assigning your role."
+                            )
+
+                    remaining = (
+                        timedelta(hours=24) - elapsed
+                    )
 
                     hours = int(
                         remaining.total_seconds() // 3600
                     )
 
                     minutes = int(
-                        (
-                            remaining.total_seconds() % 3600
-                        ) // 60
+                        (remaining.total_seconds() % 3600) // 60
                     )
 
                     await interaction.response.send_message(
-                        "⏳ **You can't change your Gamdom account "
-                        "information yet.**\n\n"
-                        f"You can update it again in approximately "
-                        f"**{hours}h {minutes}m**.\n\n"
-                        "You can only change your Gamdom information "
-                        "once every 24 hours.",
+                        "⏳ **Your Gamdom account is already connected.**\n\n"
+                        f"You can update your information again in "
+                        f"approximately **{hours}h {minutes}m**.\n\n"
+                        "Your existing account information remains saved."
+                        + role_warning,
                         ephemeral=True
                     )
 
@@ -19512,31 +19640,30 @@ class GamdomConnectModal(
 
             if username_duplicate:
 
+                duplicate_id = username_duplicate[0]
+
                 duplicate_member = guild.get_member(
-                    username_duplicate[0]
+                    duplicate_id
                 )
 
-                if duplicate_member:
-
-                    mention = duplicate_member.mention
-
-                else:
-
-                    mention = f"<@{username_duplicate[0]}>"
+                mention = (
+                    duplicate_member.mention
+                    if duplicate_member
+                    else f"<@{duplicate_id}>"
+                )
 
                 await interaction.response.send_message(
                     "❌ **Gamdom Username Already Registered**\n\n"
                     f"The Gamdom username **{username}** is already "
                     f"registered to {mention}.\n\n"
-                    "If you believe this is incorrect, please contact "
-                    "the staff.",
+                    "If you believe this is incorrect, please contact staff.",
                     ephemeral=True
                 )
 
                 return
 
             # -----------------------------------------
-            # CHECK DUPLICATE GAMDΟM ID
+            # CHECK DUPLICATE GAMDOM ID
             # -----------------------------------------
 
             cursor.execute("""
@@ -19555,24 +19682,23 @@ class GamdomConnectModal(
 
             if id_duplicate:
 
+                duplicate_id = id_duplicate[0]
+
                 duplicate_member = guild.get_member(
-                    id_duplicate[0]
+                    duplicate_id
                 )
 
-                if duplicate_member:
-
-                    mention = duplicate_member.mention
-
-                else:
-
-                    mention = f"<@{id_duplicate[0]}>"
+                mention = (
+                    duplicate_member.mention
+                    if duplicate_member
+                    else f"<@{duplicate_id}>"
+                )
 
                 await interaction.response.send_message(
                     "❌ **Gamdom ID Already Registered**\n\n"
                     f"The Gamdom ID **{gamdom_id}** is already "
                     f"registered to {mention}.\n\n"
-                    "If you believe this is incorrect, please contact "
-                    "the staff.",
+                    "If you believe this is incorrect, please contact staff.",
                     ephemeral=True
                 )
 
@@ -19602,13 +19728,8 @@ class GamdomConnectModal(
                     user.id
                 ))
 
-                message = (
+                action_message = (
                     "✅ **Gamdom Account Updated!**\n\n"
-                    f"**Username:** `{username}`\n"
-                    f"**Gamdom ID:** `{gamdom_id}`\n\n"
-                    "Your Gamdom information has been updated "
-                    "successfully.\n\n"
-                    "You can change it again after **24 hours**."
                 )
 
             else:
@@ -19632,18 +19753,95 @@ class GamdomConnectModal(
                     now
                 ))
 
-                message = (
+                action_message = (
                     "✅ **Gamdom Account Connected!**\n\n"
-                    f"**Username:** `{username}`\n"
-                    f"**Gamdom ID:** `{gamdom_id}`\n\n"
-                    "Your Gamdom information has been saved "
-                    "successfully for future prizes and rewards."
                 )
 
             conn.commit()
 
+            # -----------------------------------------
+            # ASSIGN GAMDΟM ACCOUNT ROLE
+            # -----------------------------------------
+
+            gamdom_role = guild.get_role(
+                GAMDOM_ACCOUNT_ROLE_ID
+            )
+
+            role_message = ""
+
+            if gamdom_role is None:
+
+                print(
+                    "❌ Gamdom account role not found: "
+                    f"{GAMDOM_ACCOUNT_ROLE_ID}"
+                )
+
+                role_message = (
+                    "\n\n⚠️ Your account was saved, but "
+                    "the Gamdom role could not be found. "
+                    "Please contact staff."
+                )
+
+            elif gamdom_role in user.roles:
+
+                role_message = (
+                    "\n\n✅ You already have your Gamdom account role."
+                )
+
+            else:
+
+                try:
+
+                    await user.add_roles(
+                        gamdom_role,
+                        reason="Successfully connected Gamdom account"
+                    )
+
+                    print(
+                        f"🎰 Assigned Gamdom account role to {user}"
+                    )
+
+                    role_message = (
+                        "\n\n🎖️ **Gamdom Account Role Assigned!**"
+                    )
+
+                except discord.Forbidden:
+
+                    print(
+                        "❌ Cannot assign Gamdom role. "
+                        "Check Manage Roles permission and role hierarchy."
+                    )
+
+                    role_message = (
+                        "\n\n⚠️ Your account was saved, but I couldn't "
+                        "assign your Gamdom role. Please contact staff."
+                    )
+
+                except Exception as e:
+
+                    print(
+                        f"❌ Gamdom role assignment error: {e}"
+                    )
+
+                    role_message = (
+                        "\n\n⚠️ Your account was saved, but there was "
+                        "a problem assigning your Gamdom role."
+                    )
+
+            # -----------------------------------------
+            # SUCCESS MESSAGE
+            # -----------------------------------------
+
             await interaction.response.send_message(
-                message,
+                action_message
+                + f"**Username:** `{username}`\n"
+                + f"**Gamdom ID:** `{gamdom_id}`\n"
+                + "\nYour Gamdom account information has been saved."
+                + role_message
+                + "\n\n**Reminder:** Account connection does not "
+                  "automatically confirm affiliate attribution or "
+                  "KYC Level 2. Please open a support ticket and "
+                  "submit your verification proof.",
                 ephemeral=True
             )
 
@@ -19665,6 +19863,35 @@ class GamdomConnectModal(
         finally:
 
             conn.close()
+
+
+# =========================================
+# GAMDΟM ACCOUNT CONNECTION VIEW
+# =========================================
+
+class GamdomConnectView(discord.ui.View):
+
+    def __init__(self):
+
+        super().__init__(
+            timeout=None
+        )
+
+    @discord.ui.button(
+        label="Connect Gamdom Account",
+        style=discord.ButtonStyle.green,
+        emoji="🎰",
+        custom_id="gamdom_connect_account"
+    )
+    async def connect_gamdom(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        await interaction.response.send_modal(
+            GamdomConnectModal()
+        )
 
 @bot.tree.command(
     name="gamdom_connect",
@@ -22827,5 +23054,1578 @@ async def tiktok_notification_task():
 async def before_tiktok_notification_task():
     await bot.wait_until_ready()
 
+# =========================================
+# CHECK GIVEAWAY ELIGIBILITY ROLES
+# =========================================
+
+def has_exclusive_giveaway_roles(member):
+
+    member_role_ids = {
+        role.id
+        for role in member.roles
+    }
+
+    required_roles = {
+        EXCLUSIVE_GIVEAWAY_ROLE_ID,
+        GAMDOM_ACCOUNT_ROLE_ID
+    }
+
+    return required_roles.issubset(member_role_ids)
+
+
+
+# ==========================================
+# X CREATOR GIVEAWAY DATABASE HELPERS
+# ==========================================
+
+def get_x_creator_giveaway_db():
+
+    conn = sqlite3.connect(DB_PATH)
+
+    conn.execute("PRAGMA foreign_keys = ON")
+
+    return conn
+
+
+def get_x_creator_giveaway(giveaway_id):
+
+    conn = get_x_creator_giveaway_db()
+
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT *
+        FROM x_creator_giveaways
+        WHERE id = ?
+    """, (giveaway_id,))
+
+    giveaway = cursor.fetchone()
+
+    conn.close()
+
+    return giveaway
+
+
+def get_x_creator_giveaway_entries(giveaway_id):
+
+    conn = get_x_creator_giveaway_db()
+
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT user_id, username, entered_at
+        FROM x_creator_giveaway_entries
+        WHERE giveaway_id = ?
+        ORDER BY entered_at ASC
+    """, (giveaway_id,))
+
+    entries = cursor.fetchall()
+
+    conn.close()
+
+    return entries
+
+
+def has_exclusive_giveaway_roles(member):
+
+    member_role_ids = {
+        role.id
+        for role in member.roles
+    }
+
+    required_roles = {
+        EXCLUSIVE_GIVEAWAY_ROLE_ID,
+        GAMDOM_ACCOUNT_ROLE_ID
+    }
+
+    return required_roles.issubset(member_role_ids)
+
+
+
+# ==========================================
+# X CREATOR GIVEAWAY DATABASE ACTIONS
+# ==========================================
+
+def create_x_creator_giveaway(guild_id, channel_id, created_by):
+
+    conn = get_x_creator_giveaway_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO x_creator_giveaways (
+            guild_id,
+            channel_id,
+            created_by,
+            title,
+            winner_count,
+            prize_amount,
+            total_prize,
+            status
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'active')
+    """, (
+        guild_id,
+        channel_id,
+        created_by,
+        X_CREATOR_GIVEAWAY_TITLE,
+        X_CREATOR_GIVEAWAY_WINNER_COUNT,
+        X_CREATOR_GIVEAWAY_PRIZE_AMOUNT,
+        X_CREATOR_GIVEAWAY_TOTAL_PRIZE
+    ))
+
+    giveaway_id = cursor.lastrowid
+
+    conn.commit()
+    conn.close()
+
+    return giveaway_id
+
+
+def save_x_creator_giveaway_message(giveaway_id, message_id):
+
+    conn = get_x_creator_giveaway_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE x_creator_giveaways
+        SET message_id = ?
+        WHERE id = ?
+    """, (message_id, giveaway_id))
+
+    conn.commit()
+    conn.close()
+
+
+def add_x_creator_giveaway_entry(giveaway_id, user_id, username):
+
+    conn = get_x_creator_giveaway_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT status
+        FROM x_creator_giveaways
+        WHERE id = ?
+    """, (giveaway_id,))
+
+    giveaway = cursor.fetchone()
+
+    if not giveaway or giveaway[0] != "active":
+        conn.close()
+        return "closed"
+
+    try:
+
+        cursor.execute("""
+            INSERT INTO x_creator_giveaway_entries (
+                giveaway_id,
+                user_id,
+                username
+            )
+            VALUES (?, ?, ?)
+        """, (
+            giveaway_id,
+            user_id,
+            username
+        ))
+
+        conn.commit()
+        conn.close()
+
+        return "success"
+
+    except sqlite3.IntegrityError:
+
+        conn.close()
+        return "already_entered"
+
+
+
+# ==========================================
+# X CREATOR GIVEAWAY ANNOUNCEMENT EMBED
+# ==========================================
+
+def create_x_creator_giveaway_embed():
+
+    embed = discord.Embed(
+        title=X_CREATOR_GIVEAWAY_TITLE,
+        description=(
+            "This giveaway is exclusively for our "
+            "**Verified X Creators!**\n\n"
+
+            "💎 **$200 TOTAL PRIZE POOL**\n"
+            "🏆 **10 WINNERS · $20 EACH**\n\n"
+
+            "Only eligible creators with both required "
+            "Discord roles can enter.\n\n"
+
+            "━━━━━━━━━━━━━━━━━━━━"
+        ),
+        color=discord.Color.gold()
+    )
+
+    embed.add_field(
+        name="🎟️ HOW TO ENTER",
+        value=(
+            "1. You must have both required Discord roles:\n"
+            "   • Exclusive X Creator\n"
+            "   • Gamdom Account Connected\n\n"
+
+            "2. Click the **Enter Giveaway** button below.\n\n"
+
+            "3. Each member can enter only once."
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="📋 ADDITIONAL REQUIREMENTS",
+        value=(
+            "To qualify for the prize, you must:\n\n"
+
+            "🎥 Follow our Kick channel:\n"
+            "[kick.com/wildlines](https://kick.com/wildlines)\n\n"
+
+            "🎰 Register on Gamdom using our affiliate link:\n"
+            "[Register on Gamdom](https://gamdom.com/?aff=wildlines)\n\n"
+
+            "🪪 Complete **Gamdom KYC Level 2**.\n\n"
+
+            "🐦 Follow both X accounts:\n"
+            "[WildLinesX](https://x.com/WildLinesX)\n"
+            "[WildLinesWorld](https://x.com/WildLinesWorld)"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="🎫 IMPORTANT: SUBMIT YOUR PROOF",
+        value=(
+            "After entering the giveaway, open a support ticket "
+            "and provide proof of the following:\n\n"
+
+            "• Gamdom registration under the **WildLines** affiliate code.\n"
+            "• Gamdom KYC Level 2 completion.\n"
+            "• Following our Kick channel.\n"
+            "• Following both X accounts.\n\n"
+
+            "⚠️ Having the Gamdom Account Connected Discord role "
+            "does not automatically confirm affiliate registration "
+            "or KYC Level 2.\n\n"
+
+            "Our staff will manually review your proof. "
+            "Winners must pass verification before receiving "
+            "their prizes."
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="⚠️ GIVEAWAY RULES",
+        value=(
+            "• One entry per person.\n"
+            "• Duplicate or fraudulent entries are not allowed.\n"
+            "• Both required Discord roles must be retained "
+            "for eligibility.\n"
+            "• Staff verification is required before prizes "
+            "are awarded.\n"
+            "• Only the giveaway owner can conduct draws "
+            "and rerolls."
+        ),
+        inline=False
+    )
+
+    embed.set_footer(
+        text="WildLines • Verified X Creators Exclusive Giveaway"
+    )
+
+    return embed# ==========================================
+# X CREATOR GIVEAWAY ANNOUNCEMENT EMBED
+# ==========================================
+
+def create_x_creator_giveaway_embed():
+
+    embed = discord.Embed(
+        title=X_CREATOR_GIVEAWAY_TITLE,
+        description=(
+            "This giveaway is exclusively for our "
+            "**Verified X Creators!**\n\n"
+
+            "💎 **$200 TOTAL PRIZE POOL**\n"
+            "🏆 **10 WINNERS · $20 EACH**\n\n"
+
+            "Only eligible creators with both required "
+            "Discord roles can enter.\n\n"
+
+            "━━━━━━━━━━━━━━━━━━━━"
+        ),
+        color=discord.Color.gold()
+    )
+
+    embed.add_field(
+        name="🎟️ HOW TO ENTER",
+        value=(
+            "1. You must have both required Discord roles:\n"
+            "   • Exclusive X Creator\n"
+            "   • Gamdom Account Connected\n\n"
+
+            "2. Click the **Enter Giveaway** button below.\n\n"
+
+            "3. Each member can enter only once."
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="📋 ADDITIONAL REQUIREMENTS",
+        value=(
+            "To qualify for the prize, you must:\n\n"
+
+            "🎥 Follow our Kick channel:\n"
+            "[kick.com/wildlines](https://kick.com/wildlines)\n\n"
+
+            "🎰 Register on Gamdom using our affiliate link:\n"
+            "[Register on Gamdom](https://gamdom.com/?aff=wildlines)\n\n"
+
+            "🪪 Complete **Gamdom KYC Level 2**.\n\n"
+
+            "🐦 Follow both X accounts:\n"
+            "[WildLinesX](https://x.com/WildLinesX)\n"
+            "[WildLinesWorld](https://x.com/WildLinesWorld)"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="🎫 IMPORTANT: SUBMIT YOUR PROOF",
+        value=(
+            "After entering the giveaway, open a support ticket "
+            "and provide proof of the following:\n\n"
+
+            "• Gamdom registration under the **WildLines** affiliate code.\n"
+            "• Gamdom KYC Level 2 completion.\n"
+            "• Following our Kick channel.\n"
+            "• Following both X accounts.\n\n"
+
+            "⚠️ Having the Gamdom Account Connected Discord role "
+            "does not automatically confirm affiliate registration "
+            "or KYC Level 2.\n\n"
+
+            "Our staff will manually review your proof. "
+            "Winners must pass verification before receiving "
+            "their prizes."
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="⚠️ GIVEAWAY RULES",
+        value=(
+            "• One entry per person.\n"
+            "• Duplicate or fraudulent entries are not allowed.\n"
+            "• Both required Discord roles must be retained "
+            "for eligibility.\n"
+            "• Staff verification is required before prizes "
+            "are awarded.\n"
+            "• Only the giveaway owner can conduct draws "
+            "and rerolls."
+        ),
+        inline=False
+    )
+
+    embed.set_footer(
+        text="WildLines • Verified X Creators Exclusive Giveaway"
+    )
+
+    return embed
+
+    
+# ==========================================
+# X CREATOR GIVEAWAY ENTRANT PAGINATION
+# ==========================================
+
+class XCreatorEntrantPager(discord.ui.View):
+
+    def __init__(self, giveaway_id, entries):
+
+        super().__init__(timeout=180)
+
+        self.giveaway_id = giveaway_id
+        self.entries = entries
+        self.page = 0
+        self.page_size = 10
+
+        self.previous_button = discord.ui.Button(
+            label="Previous",
+            emoji="⬅️",
+            style=discord.ButtonStyle.secondary
+        )
+
+        self.next_button = discord.ui.Button(
+            label="Next",
+            emoji="➡️",
+            style=discord.ButtonStyle.secondary
+        )
+
+        self.previous_button.callback = self.previous_page
+        self.next_button.callback = self.next_page
+
+        self.add_item(self.previous_button)
+        self.add_item(self.next_button)
+
+        self.update_buttons()
+
+    def update_buttons(self):
+
+        total_pages = max(
+            1,
+            (len(self.entries) + self.page_size - 1)
+            // self.page_size
+        )
+
+        self.previous_button.disabled = self.page <= 0
+        self.next_button.disabled = self.page >= total_pages - 1
+
+    def create_embed(self):
+
+        total_entries = len(self.entries)
+
+        total_pages = max(
+            1,
+            (total_entries + self.page_size - 1)
+            // self.page_size
+        )
+
+        start = self.page * self.page_size
+        end = start + self.page_size
+
+        current_entries = self.entries[start:end]
+
+        embed = discord.Embed(
+            title="🎟️ X Creator Giveaway Entrants",
+            description=(
+                f"**Total Entries: {total_entries}**\n"
+                f"Page {self.page + 1} of {total_pages}\n\n"
+            ),
+            color=discord.Color.gold()
+        )
+
+        if not current_entries:
+
+            embed.description += "No one has entered yet."
+
+        else:
+
+            for index, entry in enumerate(
+                current_entries,
+                start=start + 1
+            ):
+
+                user_id = entry[0]
+                username = entry[1] or "Unknown User"
+
+                embed.description += (
+                    f"**{index}.** <@{user_id}> "
+                    f"(`{username}`)\n"
+                )
+
+        embed.set_footer(
+            text="Only you can see this entrant list."
+        )
+
+        return embed
+
+    async def previous_page(self, interaction):
+
+        self.page -= 1
+
+        self.update_buttons()
+
+        await interaction.response.edit_message(
+            embed=self.create_embed(),
+            view=self
+        )
+
+    async def next_page(self, interaction):
+
+        self.page += 1
+
+        self.update_buttons()
+
+        await interaction.response.edit_message(
+            embed=self.create_embed(),
+            view=self
+        )
+
+
+
+# ==========================================
+# X CREATOR GIVEAWAY VIEW
+# ==========================================
+
+class XCreatorGiveawayView(discord.ui.View):
+
+    def __init__(self, giveaway_id):
+
+        super().__init__(timeout=None)
+
+        self.giveaway_id = giveaway_id
+
+        # ======================================
+        # ENTER GIVEAWAY BUTTON
+        # ======================================
+
+        enter_button = discord.ui.Button(
+            label="Enter Giveaway",
+            emoji="🎟️",
+            style=discord.ButtonStyle.success,
+            custom_id=f"x_creator_enter:{giveaway_id}"
+        )
+
+        enter_button.callback = self.enter_giveaway
+
+        self.add_item(enter_button)
+
+        # ======================================
+        # VIEW ENTRANTS BUTTON
+        # ======================================
+
+        entrants_button = discord.ui.Button(
+            label="View Entrants",
+            emoji="👥",
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"x_creator_entrants:{giveaway_id}"
+        )
+
+        entrants_button.callback = self.view_entrants
+
+        self.add_item(entrants_button)
+
+        # ======================================
+        # DRAW 10 WINNERS BUTTON
+        # ======================================
+
+        draw_button = discord.ui.Button(
+            label="Draw 10 Winners",
+            emoji="🏆",
+            style=discord.ButtonStyle.primary,
+            custom_id=f"x_creator_draw:{giveaway_id}"
+        )
+
+        draw_button.callback = self.draw_winners
+
+        self.add_item(draw_button)
+
+        # ======================================
+        # REROLL WINNER BUTTON
+        # ======================================
+
+        reroll_button = discord.ui.Button(
+            label="Reroll Winner",
+            emoji="🔄",
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"x_creator_reroll:{giveaway_id}"
+        )
+
+        reroll_button.callback = self.reroll_winner
+
+        self.add_item(reroll_button)
+
+    # ==========================================
+    # ENTER GIVEAWAY
+    # ==========================================
+
+    async def enter_giveaway(self, interaction):
+
+        member = interaction.user
+
+        if not isinstance(member, discord.Member):
+
+            await interaction.response.send_message(
+                "You must enter from inside the server.",
+                ephemeral=True
+            )
+
+            return
+
+        # Check giveaway status first
+
+        giveaway = get_x_creator_giveaway(
+            self.giveaway_id
+        )
+
+        if not giveaway or giveaway[9] != "active":
+
+            await interaction.response.send_message(
+                "❌ This giveaway is no longer accepting entries.",
+                ephemeral=True
+            )
+
+            return
+
+        # Check required roles
+
+        if not has_exclusive_giveaway_roles(member):
+
+            await interaction.response.send_message(
+                "❌ You are not eligible to enter this giveaway.\n\n"
+                "You must have BOTH of these roles:\n"
+                f"<@&{EXCLUSIVE_GIVEAWAY_ROLE_ID}>\n"
+                f"<@&{GAMDOM_ACCOUNT_ROLE_ID}>",
+                ephemeral=True,
+                allowed_mentions=discord.AllowedMentions.none()
+            )
+
+            return
+
+        # Save entry
+
+        result = add_x_creator_giveaway_entry(
+            self.giveaway_id,
+            member.id,
+            str(member)
+        )
+
+        if result == "success":
+
+            await interaction.response.send_message(
+                "🎉 **You have successfully entered the "
+                "Verified X Creators Exclusive Giveaway!**\n\n"
+                "Good luck!",
+                ephemeral=True
+            )
+
+        elif result == "already_entered":
+
+            await interaction.response.send_message(
+                "⚠️ You have already entered this giveaway!",
+                ephemeral=True
+            )
+
+        elif result == "closed":
+
+            await interaction.response.send_message(
+                "❌ This giveaway is no longer accepting entries.",
+                ephemeral=True
+            )
+
+        else:
+
+            await interaction.response.send_message(
+                "❌ Something went wrong while processing your entry. "
+                "Please try again later.",
+                ephemeral=True
+            )
+
+    # ==========================================
+    # VIEW ENTRANTS
+    # ==========================================
+
+    async def view_entrants(self, interaction):
+
+        giveaway = get_x_creator_giveaway(
+            self.giveaway_id
+        )
+
+        if not giveaway:
+
+            await interaction.response.send_message(
+                "❌ Giveaway not found.",
+                ephemeral=True
+            )
+
+            return
+
+        entries = get_x_creator_giveaway_entries(
+            self.giveaway_id
+        )
+
+        pager = XCreatorEntrantPager(
+            self.giveaway_id,
+            entries
+        )
+
+        await interaction.response.send_message(
+            embed=pager.create_embed(),
+            view=pager,
+            ephemeral=True,
+            allowed_mentions=discord.AllowedMentions.none()
+        )
+
+    # ==========================================
+    # DRAW 10 WINNERS
+    # ==========================================
+
+    async def draw_winners(self, interaction):
+
+        # Only giveaway owner can draw
+
+        if interaction.user.id != GIVEAWAY_OWNER_ID:
+
+            await interaction.response.send_message(
+                "❌ Only the giveaway owner can draw winners.",
+                ephemeral=True
+            )
+
+            return
+
+        if not interaction.guild:
+
+            await interaction.response.send_message(
+                "This action must be performed inside the server.",
+                ephemeral=True
+            )
+
+            return
+
+        # Check giveaway status
+
+        giveaway = get_x_creator_giveaway(
+            self.giveaway_id
+        )
+
+        if not giveaway or giveaway[9] != "active":
+
+            await interaction.response.send_message(
+                "❌ This giveaway has already been drawn "
+                "or is no longer active.",
+                ephemeral=True
+            )
+
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        # Get all entrants
+
+        entries = get_x_creator_giveaway_entries(
+            self.giveaway_id
+        )
+
+        eligible_members = []
+
+        failed_lookups = []
+
+        # Verify current Discord roles
+
+        for entry in entries:
+
+            user_id = entry[0]
+
+            member = interaction.guild.get_member(user_id)
+
+            if member is None:
+
+                try:
+
+                    member = await interaction.guild.fetch_member(
+                        user_id
+                    )
+
+                except discord.NotFound:
+
+                    # Member has left the server
+
+                    continue
+
+                except discord.HTTPException:
+
+                    # Temporary lookup failure.
+                    # Do not silently treat this member as ineligible.
+
+                    failed_lookups.append(user_id)
+
+                    continue
+
+            if has_exclusive_giveaway_roles(member):
+
+                eligible_members.append(member)
+
+        # Do not draw if member checks failed
+
+        if failed_lookups:
+
+            await interaction.followup.send(
+                "⚠️ I couldn't verify some entrants because Discord "
+                "returned an error.\n\n"
+                f"Failed checks: **{len(failed_lookups)}**\n"
+                "Please try the draw again.",
+                ephemeral=True
+            )
+
+            return
+
+        # Check minimum number of eligible entrants
+
+        if len(eligible_members) < X_CREATOR_GIVEAWAY_WINNER_COUNT:
+
+            await interaction.followup.send(
+                "❌ There are not enough eligible entrants to draw "
+                "10 winners.\n\n"
+                f"Eligible entrants: **{len(eligible_members)}**\n"
+                f"Required: **{X_CREATOR_GIVEAWAY_WINNER_COUNT}**",
+                ephemeral=True
+            )
+
+            return
+
+        # Perform draw and save winners
+
+        winners = draw_x_creator_giveaway(
+            self.giveaway_id,
+            eligible_members
+        )
+
+        if winners is None:
+
+            await interaction.followup.send(
+                "❌ This giveaway has already been drawn "
+                "or is no longer active.",
+                ephemeral=True
+            )
+
+            return
+
+        # Build winner announcement
+
+        winner_lines = []
+
+        for number, winner in enumerate(winners, start=1):
+
+            winner_lines.append(
+                f"**{number}.** {winner.mention} "
+                f"• **${X_CREATOR_GIVEAWAY_PRIZE_AMOUNT}**"
+            )
+
+        embed = discord.Embed(
+            title="🏆 VERIFIED X CREATORS GIVEAWAY WINNERS",
+            description=(
+                "Congratulations to our 10 randomly selected winners!\n\n"
+                + "\n".join(winner_lines)
+                + "\n\n"
+                f"💰 **Total Prize Pool: "
+                f"${X_CREATOR_GIVEAWAY_TOTAL_PRIZE}**\n"
+                f"🎉 **Each Winner Receives: "
+                f"${X_CREATOR_GIVEAWAY_PRIZE_AMOUNT}**\n\n"
+                "⚠️ All winners must complete staff verification "
+                "before prizes are awarded."
+            ),
+            color=discord.Color.gold()
+        )
+
+        embed.set_footer(
+            text="WildLines • Verified X Creators Exclusive Giveaway"
+        )
+
+        # Publish winner announcement
+
+        try:
+
+            await interaction.channel.send(
+                embed=embed,
+                allowed_mentions=discord.AllowedMentions.none()
+            )
+
+        except discord.HTTPException:
+
+            await interaction.followup.send(
+                "⚠️ Winners were saved, but Discord couldn't publish "
+                "the announcement. Please check the bot's channel "
+                "permissions.",
+                ephemeral=True
+            )
+
+            return
+
+        # Private confirmation
+
+        await interaction.followup.send(
+            "✅ The 10 winners have been selected, saved, "
+            "and announced!",
+            ephemeral=True
+        )
+
+    async def reroll_winner(self, interaction: discord.Interaction):
+
+        # Only giveaway owner can reroll
+        if interaction.user.id != GIVEAWAY_OWNER_ID:
+            await interaction.response.send_message(
+                "Only the giveaway owner can reroll winners.",
+                ephemeral=True
+            )
+            return
+
+        # Make sure interaction is inside a server
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "This action must be performed inside the server.",
+                ephemeral=True
+            )
+            return
+
+        # Check giveaway status
+        giveaway = get_x_creator_giveaway(self.giveaway_id)
+
+        if not giveaway or giveaway[9] != "drawn":
+            await interaction.response.send_message(
+                "You can only reroll after the winners have been drawn.",
+                ephemeral=True
+            )
+            return
+
+        # Get current winners
+        winners = get_x_creator_current_winners(
+            self.giveaway_id
+        )
+
+        if not winners:
+            await interaction.response.send_message(
+                "No current winners were found.",
+                ephemeral=True
+            )
+            return
+
+        # Create winner selection menu
+        reroll_view = XCreatorRerollSelectView(
+            self.giveaway_id,
+            winners
+        )
+
+        await interaction.response.send_message(
+            "Select which winner you want to replace:",
+            view=reroll_view,
+            ephemeral=True
+        )
+
+
+# ==========================================
+# X CREATOR GIVEAWAY DRAW HELPER
+# ==========================================
+
+def draw_x_creator_giveaway(giveaway_id, eligible_members):
+
+    conn = get_x_creator_giveaway_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT status
+        FROM x_creator_giveaways
+        WHERE id = ?
+    """, (giveaway_id,))
+
+    giveaway = cursor.fetchone()
+
+    if not giveaway or giveaway[0] != "active":
+
+        conn.close()
+        return None
+
+    if len(eligible_members) < X_CREATOR_GIVEAWAY_WINNER_COUNT:
+
+        conn.close()
+        return None
+
+    winners = random.sample(
+        eligible_members,
+        X_CREATOR_GIVEAWAY_WINNER_COUNT
+    )
+
+    for number, member in enumerate(winners, start=1):
+
+        cursor.execute("""
+            INSERT INTO x_creator_giveaway_winners (
+                giveaway_id,
+                user_id,
+                username,
+                winner_number,
+                is_current,
+                is_verified
+            )
+            VALUES (?, ?, ?, ?, 1, 0)
+        """, (
+            giveaway_id,
+            member.id,
+            str(member),
+            number
+        ))
+
+    cursor.execute("""
+        UPDATE x_creator_giveaways
+        SET status = 'drawn',
+            drawn_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    """, (giveaway_id,))
+
+    conn.commit()
+    conn.close()
+
+    return winners
+
+def get_x_creator_current_winners(giveaway_id):
+    conn = get_x_creator_giveaway_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT id, user_id, username, winner_number
+        FROM x_creator_giveaway_winners
+        WHERE giveaway_id = ?
+        AND is_current = 1
+        ORDER BY winner_number ASC
+    """, (giveaway_id,))
+
+    winners = cursor.fetchall()
+    conn.close()
+
+    return winners
+
+
+def get_x_creator_previous_winner_ids(giveaway_id):
+    conn = get_x_creator_giveaway_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT DISTINCT user_id
+        FROM x_creator_giveaway_winners
+        WHERE giveaway_id = ?
+    """, (giveaway_id,))
+
+    winner_ids = {row[0] for row in cursor.fetchall()}
+    conn.close()
+
+    return winner_ids
+
+
+def save_x_creator_giveaway_reroll(
+    giveaway_id,
+    old_winner_row_id,
+    replacement_member,
+    rerolled_by
+):
+    conn = get_x_creator_giveaway_db()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("BEGIN IMMEDIATE")
+
+        # Confirm the selected winner is still current.
+        cursor.execute("""
+            SELECT user_id, winner_number
+            FROM x_creator_giveaway_winners
+            WHERE id = ?
+            AND giveaway_id = ?
+            AND is_current = 1
+        """, (old_winner_row_id, giveaway_id))
+
+        old_winner = cursor.fetchone()
+
+        if not old_winner:
+            conn.rollback()
+            return False
+
+        old_user_id, winner_number = old_winner
+
+        # A previous winner cannot be selected again.
+        cursor.execute("""
+            SELECT 1
+            FROM x_creator_giveaway_winners
+            WHERE giveaway_id = ?
+            AND user_id = ?
+            LIMIT 1
+        """, (giveaway_id, replacement_member.id))
+
+        if cursor.fetchone():
+            conn.rollback()
+            return False
+
+        # Mark the old winner as no longer current.
+        cursor.execute("""
+            UPDATE x_creator_giveaway_winners
+            SET is_current = 0
+            WHERE id = ?
+        """, (old_winner_row_id,))
+
+        # Save the replacement in the same winner position.
+        cursor.execute("""
+            INSERT INTO x_creator_giveaway_winners (
+                giveaway_id,
+                user_id,
+                username,
+                winner_number,
+                is_current,
+                is_verified
+            )
+            VALUES (?, ?, ?, ?, 1, 0)
+        """, (
+            giveaway_id,
+            replacement_member.id,
+            str(replacement_member),
+            winner_number
+        ))
+
+        new_winner_row_id = cursor.lastrowid
+
+        # Save the reroll history.
+        cursor.execute("""
+            INSERT INTO x_creator_giveaway_rerolls (
+                giveaway_id,
+                original_winner_id,
+                replacement_winner_id,
+                winner_number,
+                rerolled_by
+            )
+            VALUES (?, ?, ?, ?, ?)
+        """, (
+            giveaway_id,
+            old_winner_row_id,
+            new_winner_row_id,
+            winner_number,
+            rerolled_by
+        ))
+
+        conn.commit()
+        return True
+
+    except Exception:
+        conn.rollback()
+        raise
+
+    finally:
+        conn.close()
+
+
+class XCreatorRerollSelectView(discord.ui.View):
+
+    def __init__(self, giveaway_id, winners):
+        super().__init__(timeout=180)
+
+        self.giveaway_id = giveaway_id
+
+        options = []
+
+        for winner in winners:
+            winner_row_id, user_id, username, winner_number = winner
+
+            options.append(
+                discord.SelectOption(
+                    label=f"Winner #{winner_number}",
+                    description=f"{username} | User ID: {user_id}",
+                    value=str(winner_row_id)
+                )
+            )
+
+        self.winner_select = discord.ui.Select(
+            placeholder="Choose which winner to reroll...",
+            min_values=1,
+            max_values=1,
+            options=options,
+            custom_id=f"x_creator_reroll_select:{giveaway_id}"
+        )
+
+        self.winner_select.callback = self.select_winner
+        self.add_item(self.winner_select)
+
+    async def select_winner(self, interaction: discord.Interaction):
+
+        # ======================================
+        # OWNER CHECK
+        # ======================================
+
+        if interaction.user.id != GIVEAWAY_OWNER_ID:
+            await interaction.response.send_message(
+                "You are not allowed to reroll winners.",
+                ephemeral=True
+            )
+            return
+
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "This can only be used inside the giveaway server.",
+                ephemeral=True
+            )
+            return
+
+        # ======================================
+        # CHECK GIVEAWAY
+        # ======================================
+
+        giveaway = get_x_creator_giveaway(self.giveaway_id)
+
+        if not giveaway or giveaway[9] != "drawn":
+            await interaction.response.send_message(
+                "This giveaway has not been drawn or is no longer available.",
+                ephemeral=True
+            )
+            return
+
+        old_winner_row_id = int(self.winner_select.values[0])
+
+        current_winners = get_x_creator_current_winners(
+            self.giveaway_id
+        )
+
+        selected_winner = next(
+            (
+                winner for winner in current_winners
+                if winner[0] == old_winner_row_id
+            ),
+            None
+        )
+
+        if not selected_winner:
+            await interaction.response.send_message(
+                "That winner is no longer in the current winner list.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        # ======================================
+        # GET GIVEAWAY CHANNEL
+        # ======================================
+
+        channel_id = giveaway[2]
+
+        try:
+            giveaway_channel = interaction.guild.get_channel(channel_id)
+
+            if giveaway_channel is None:
+                giveaway_channel = await interaction.guild.fetch_channel(
+                    channel_id
+                )
+
+        except discord.HTTPException:
+            await interaction.followup.send(
+                "I couldn't access the giveaway channel. "
+                "Please check the channel and bot permissions.",
+                ephemeral=True
+            )
+            return
+
+        if not isinstance(giveaway_channel, discord.TextChannel):
+            await interaction.followup.send(
+                "The saved giveaway channel is not a text channel.",
+                ephemeral=True
+            )
+            return
+
+        # ======================================
+        # GET ENTRANTS
+        # ======================================
+
+        entries = get_x_creator_giveaway_entries(
+            self.giveaway_id
+        )
+
+        # Exclude everyone who has ever won.
+        previous_winner_ids = get_x_creator_previous_winner_ids(
+            self.giveaway_id
+        )
+
+        eligible_members = []
+
+        for user_id, username, entered_at in entries:
+
+            if user_id in previous_winner_ids:
+                continue
+
+            try:
+                member = interaction.guild.get_member(user_id)
+
+                if member is None:
+                    member = await interaction.guild.fetch_member(
+                        user_id
+                    )
+
+                if has_exclusive_giveaway_roles(member):
+                    eligible_members.append(member)
+
+            except discord.NotFound:
+                continue
+
+            except discord.HTTPException:
+                await interaction.followup.send(
+                    "I couldn't verify all entrants because Discord "
+                    "returned an error. Please try again.",
+                    ephemeral=True
+                )
+                return
+
+        # ======================================
+        # CHECK ELIGIBLE REPLACEMENTS
+        # ======================================
+
+        if not eligible_members:
+            await interaction.followup.send(
+                "There are no eligible replacement entrants available.",
+                ephemeral=True
+            )
+            return
+
+        # ======================================
+        # RANDOM REPLACEMENT
+        # ======================================
+
+        replacement_member = random.choice(eligible_members)
+
+        saved = save_x_creator_giveaway_reroll(
+            giveaway_id=self.giveaway_id,
+            old_winner_row_id=old_winner_row_id,
+            replacement_member=replacement_member,
+            rerolled_by=interaction.user.id
+        )
+
+        if not saved:
+            await interaction.followup.send(
+                "The reroll could not be saved. "
+                "The winner list may have changed. Please try again.",
+                ephemeral=True
+            )
+            return
+
+        # ======================================
+        # BUILD ANNOUNCEMENT
+        # ======================================
+
+        old_username = selected_winner[2]
+        winner_number = selected_winner[3]
+
+        embed = discord.Embed(
+            title="🔄 GIVEAWAY WINNER REROLLED",
+            description=(
+                f"**Winner #{winner_number} has been replaced!**\n\n"
+                f"~~{old_username}~~\n"
+                f"🏆 **New Winner:** {replacement_member.mention}\n\n"
+                f"**Prize:** ${X_CREATOR_GIVEAWAY_PRIZE_AMOUNT}"
+            ),
+            color=discord.Color.gold()
+        )
+
+        embed.set_footer(
+            text=f"Giveaway #{self.giveaway_id}"
+        )
+
+        # ======================================
+        # PUBLISH ANNOUNCEMENT
+        # ======================================
+
+        try:
+            await giveaway_channel.send(
+                embed=embed,
+                allowed_mentions=discord.AllowedMentions(
+                    users=True,
+                    roles=False,
+                    everyone=False
+                )
+            )
+
+        except discord.HTTPException:
+            await interaction.followup.send(
+                "⚠️ The replacement was saved successfully, "
+                "but Discord couldn't publish the announcement. "
+                "Please check the bot's channel permissions.",
+                ephemeral=True
+            )
+            self.stop()
+            return
+
+        # ======================================
+        # CONFIRMATION
+        # ======================================
+
+        await interaction.followup.send(
+            f"✅ Successfully replaced Winner #{winner_number} "
+            f"with {replacement_member.mention}.",
+            ephemeral=True
+        )
+
+        self.stop()
+
+
+# ==========================================
+# CREATE X CREATOR GIVEAWAY COMMAND
+# ==========================================
+
+@bot.tree.command(
+    name="x_creator_giveaway",
+    description="Create a new Verified X Creators Exclusive Giveaway"
+)
+async def x_creator_giveaway(interaction: discord.Interaction):
+
+    # ======================================
+    # OWNER CHECK
+    # ======================================
+
+    if interaction.user.id != GIVEAWAY_OWNER_ID:
+        await interaction.response.send_message(
+            "You are not allowed to create giveaways.",
+            ephemeral=True
+        )
+        return
+
+    if not interaction.guild:
+        await interaction.response.send_message(
+            "This command must be used inside the server.",
+            ephemeral=True
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    guild = interaction.guild
+    giveaway_channel = None
+    giveaway_id = None
+
+    try:
+
+        # ======================================
+        # FIND GIVEAWAY CATEGORY
+        # ======================================
+
+        category = guild.get_channel(
+            X_CREATOR_GIVEAWAY_CATEGORY_ID
+        )
+
+        if category is None:
+            category = await guild.fetch_channel(
+                X_CREATOR_GIVEAWAY_CATEGORY_ID
+            )
+
+        if not isinstance(category, discord.CategoryChannel):
+            await interaction.followup.send(
+                "The configured giveaway category was not found "
+                "or is not a category.",
+                ephemeral=True
+            )
+            return
+
+        # ======================================
+        # CREATE NEW CHANNEL
+        # ======================================
+
+        giveaway_channel = await guild.create_text_channel(
+            name="verified-x-creators-giveaway",
+            category=category,
+            topic="Verified X Creators Exclusive Giveaway"
+        )
+
+        # ======================================
+        # CREATE DATABASE RECORD
+        # ======================================
+
+        giveaway_id = create_x_creator_giveaway(
+            guild.id,
+            giveaway_channel.id,
+            interaction.user.id
+        )
+
+        # ======================================
+        # CREATE GIVEAWAY EMBED
+        # ======================================
+
+        embed = create_x_creator_giveaway_embed()
+
+        # ======================================
+        # ATTACH GIVEAWAY BUTTONS
+        # ======================================
+
+        giveaway_view = XCreatorGiveawayView(
+            giveaway_id
+        )
+
+        # ======================================
+        # PUBLISH GIVEAWAY
+        # ======================================
+
+        giveaway_message = await giveaway_channel.send(
+            content=f"<@&{EXCLUSIVE_GIVEAWAY_ROLE_ID}>",
+            embed=embed,
+            view=giveaway_view,
+            allowed_mentions=discord.AllowedMentions(
+                roles=True,
+                users=False,
+                everyone=False
+            )
+        )
+
+        # ======================================
+        # SAVE MESSAGE ID
+        # ======================================
+
+        save_x_creator_giveaway_message(
+            giveaway_id,
+            giveaway_message.id
+        )
+
+        # ======================================
+        # SUCCESS MESSAGE
+        # ======================================
+
+        await interaction.followup.send(
+            f"✅ **Giveaway successfully created!**\n\n"
+            f"**Giveaway ID:** `{giveaway_id}`\n"
+            f"**Channel:** {giveaway_channel.mention}\n"
+            f"**Prize Pool:** ${X_CREATOR_GIVEAWAY_TOTAL_PRIZE}\n"
+            f"**Winners:** {X_CREATOR_GIVEAWAY_WINNER_COUNT}\n"
+            f"**Prize per winner:** ${X_CREATOR_GIVEAWAY_PRIZE_AMOUNT}",
+            ephemeral=True
+        )
+
+    except Exception as e:
+
+        print(
+            f"❌ X Creator Giveaway creation error: {e}"
+        )
+
+        # Mark incomplete giveaway setup
+        if giveaway_id is not None:
+            try:
+                conn = get_x_creator_giveaway_db()
+                conn.execute("""
+                    UPDATE x_creator_giveaways
+                    SET status = 'setup_failed'
+                    WHERE id = ?
+                """, (giveaway_id,))
+                conn.commit()
+                conn.close()
+
+            except Exception as db_error:
+                print(
+                    f"❌ Giveaway database cleanup error: {db_error}"
+                )
+
+        # Remove channel if setup failed
+        if giveaway_channel is not None:
+            try:
+                await giveaway_channel.delete(
+                    reason="Giveaway setup failed"
+                )
+            except discord.HTTPException:
+                pass
+
+        await interaction.followup.send(
+            "❌ Something went wrong while creating the giveaway. "
+            "Please check the bot logs.",
+            ephemeral=True
+        )
+
+def get_x_creator_giveaways_for_restore():
+
+    conn = get_x_creator_giveaway_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT id, message_id
+        FROM x_creator_giveaways
+        WHERE message_id IS NOT NULL
+        AND status IN ('active', 'drawn')
+        ORDER BY id ASC
+    """)
+
+    giveaways = cursor.fetchall()
+
+    conn.close()
+
+    return giveaways
+    
 if __name__ == "__main__":
     bot.run(TOKEN)
